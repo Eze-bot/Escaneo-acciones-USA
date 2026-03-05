@@ -1,7 +1,5 @@
 yfinance
 pandas
 streamlit
-altair<5
 whatsapp-api-client-python
 pytz
-
