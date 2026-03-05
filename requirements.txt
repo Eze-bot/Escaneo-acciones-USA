@@ -1,5 +1,7 @@
+streamlit
 yfinance
 pandas
+pandas-ta
 whatsapp-api-client-python
-streamlit
 pytz
+altair==4.2.2
