@@ -2,14 +2,13 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from whatsapp_api_client_python import API
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import pytz
 import os
 import altair as alt
-import time
-import random
 
-# 1. CONFIGURACIÓN
+# 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="Scanner Momentum USA", layout="wide")
 
 # 2. ESTILO CSS
@@ -21,102 +20,101 @@ st.markdown("""
         border-radius: 10px;
         padding: 12px;
         margin-bottom: 0px;
-        border-left: 5px solid #2196F3;
     }
     .ticker-name { color: #007bff; font-size: 1.1rem; font-weight: bold; }
     .ticker-price { font-size: 1.2rem; font-weight: bold; color: #1f1f1f; }
-    .ticker-gap { font-size: 0.95rem; font-weight: bold; color: #28a745; }
+    .ticker-gap { font-size: 0.9rem; color: #28a745; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
 RUTA_CSV = "ACTIVOS_BULLMARKET_USA.csv"
-
-st.title("🚀 Scanner Momentum USA")
+st.title("📈 Top 6 Momentum")
 
 # 3. SIDEBAR
 with st.sidebar:
-    st.header("⚙️ Filtros")
-    p_min = st.number_input("Precio Mín ($)", 0.0, 5000.0, 0.10)
-    p_max = st.number_input("Precio Máx ($)", 0.0, 5000.0, 2000.0)
-    gap_min_input = st.slider("GAP Mínimo (%)", -15.0, 15.0, -2.0)
+    st.header("⚙️ Parámetros")
+    p_min = st.number_input("Precio Mín ($)", 0.01, 1000.0, 0.50)
+    p_max = st.number_input("Precio Máx ($)", 0.01, 1000.0, 17.0)
+    gap_min = st.slider("GAP Mínimo (%)", 0.0, 20.0, 2.0)
     st.divider()
     id_ins = st.text_input("ID Instancia", "7103533853")
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
-    celular = st.text_input("WhatsApp", "5492664300161")
+    celular = st.text_input("Número", "5492664300161")
 
-# 4. FUNCIÓN DE EXTRACCIÓN (Usa el cierre más reciente disponible)
-def extraer_datos(symbol):
+# 4. LÓGICA
+def obtener_datos(ticker_raw):
     try:
-        t = yf.Ticker(symbol.strip().upper())
-        # Pedimos 7 días para cubrir cualquier hueco de fin de semana
-        hist = t.history(period="7d")
-        if len(hist) < 2: return None
-        
-        precio_actual = hist['Close'].iloc[-1]
-        cierre_previo = hist['Close'].iloc[-2]
-        gap = ((precio_actual - cierre_previo) / cierre_previo) * 100
-        
-        if p_min <= precio_actual <= p_max and gap >= gap_min_input:
-            df_plot = hist[['Close']].reset_index()
+        ticker = str(ticker_raw).split('.')[0].strip().upper()
+        stock = yf.Ticker(ticker)
+        df = stock.history(period="1mo")
+        if len(df) < 5: return None
+        precio = df['Close'].iloc[-1]
+        ayer = df['Close'].iloc[-2]
+        gap = ((precio - ayer) / ayer) * 100
+        if p_min <= precio <= p_max and gap >= gap_min:
+            df_plot = df[['Close']].reset_index()
             df_plot.columns = ['x', 'y']
-            return {"Ticker": symbol, "Precio": round(precio_actual, 2), "GAP": round(gap, 2), "Data": df_plot}
+            return {
+                "Ticker": ticker, "Precio": round(precio, 2), "GAP": round(gap, 2), 
+                "Data": df_plot, "Min": round(df['Close'].min(), 2), "Max": round(df['Close'].max(), 2)
+            }
     except: return None
     return None
 
-# 5. LÓGICA DE ESCANEO ALEATORIO
+# 5. RENDERIZADO
 if os.path.exists(RUTA_CSV):
-    df_csv = pd.read_csv(RUTA_CSV)
-    col_ticker = [c for c in df_csv.columns if 'tick' in c.lower()][0]
-    tickers_base = df_csv[col_ticker].dropna().unique().tolist()
+    tickers_list = pd.read_csv(RUTA_CSV)['Ticker'].dropna().unique().tolist()
     
-    if st.button("🔍 ESCANEAR MERCADO"):
-        # Mezclamos la lista para no analizar siempre los mismos (A, B, C...)
-        random.shuffle(tickers_base)
-        muestra = tickers_base[:70] # Analizamos 70 activos al azar
-        
-        resultados = []
-        bar = st.progress(0)
-        status = st.empty()
-        
-        for i, tkr in enumerate(muestra):
-            status.text(f"Analizando {tkr}... ({i+1}/{len(muestra)})")
-            res = extraer_datos(tkr)
-            if res:
-                resultados.append(res)
+    if st.button("🔍 INICIAR ESCANEO"):
+        with st.spinner("Escaneando..."):
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                resultados = [r for r in list(executor.map(obtener_datos, tickers_list)) if r is not None]
             
-            # Pequeña pausa para no ser bloqueados
-            time.sleep(0.1)
-            bar.progress((i + 1) / len(muestra))
-            
-        status.empty()
-        
-        if resultados:
-            top_6 = sorted(resultados, key=lambda x: x['GAP'], reverse=True)[:6]
-            cols = st.columns(3)
-            for j, res in enumerate(top_6):
-                with cols[j % 3]:
-                    st.markdown(f"""
-                        <div class="ticker-card">
-                            <div class="ticker-name">{res['Ticker']}</div>
-                            <div class="ticker-price">${res['Precio']}</div>
-                            <div class="ticker-gap" style="color:{'#28a745' if res['GAP']>=0 else '#d93025'};">
-                                GAP: {res['GAP']}%
+            if resultados:
+                top_6 = sorted(resultados, key=lambda x: x['GAP'], reverse=True)[:6]
+                cols = st.columns(3)
+                
+                for i, res in enumerate(top_6):
+                    with cols[i % 3]:
+                        st.markdown(f"""
+                            <div class="ticker-card">
+                                <div class="ticker-name">{res['Ticker']}</div>
+                                <div class="ticker-price">${res['Precio']}</div>
+                                <div class="ticker-gap">+{res['GAP']}%</div>
+                                <div style="font-size: 0.7rem; color: #999; margin-top: 5px;">
+                                    Rango mes: ${res['Min']} - ${res['Max']}
+                                </div>
                             </div>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    chart = alt.Chart(res['Data']).mark_area(
-                        line={'color': '#2196F3'},
-                        color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='#bbdefb', offset=0), alt.GradientStop(color='white', offset=1)], x1=1, y1=1, x2=1, y2=0)
-                    ).encode(x=alt.X('x:T', axis=None), y=alt.Y('y:Q', axis=None, scale=alt.Scale(zero=False))).properties(height=70)
-                    st.altair_chart(chart, use_container_width=True)
-            
-            # WhatsApp
-            try:
-                greenAPI = API.GreenApi(id_ins, token_ins)
-                msg = f"🔔 *ALERTA SCANNER*\n" + "\n".join([f"📈 {r['Ticker']} | {r['GAP']}%" for r in top_6])
-                greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
-            except: pass
-        else:
-            st.warning("No se encontraron activos con ese GAP en la muestra aleatoria. ¡Prueba bajar el GAP a -5%!")
+                        """, unsafe_allow_html=True)
+                        
+                        # Gráfico con línea de referencia de tiempo (Eje X sutil)
+                        chart = alt.Chart(res['Data']).mark_area(
+                            line={'color': '#137333', 'strokeWidth': 2},
+                            color=alt.Gradient(
+                                gradient='linear',
+                                stops=[alt.GradientStop(color='#34a853', offset=0), 
+                                       alt.GradientStop(color='white', offset=1)],
+                                x1=1, y1=1, x2=1, y2=0
+                            ),
+                            opacity=0.5
+                        ).encode(
+                            # Añadimos el eje X pero muy sutil para ver el tiempo
+                            x=alt.X('x:T', title=None, axis=alt.Axis(labels=False, grid=False, ticks=False)),
+                            y=alt.Y('y:Q', title=None, axis=alt.Axis(labels=False, grid=False), scale=alt.Scale(zero=False))
+                        ).properties(height=70)
+                        
+                        st.altair_chart(chart, use_container_width=True)
+                
+                # WhatsApp (Sin cambios)
+                ahora = datetime.datetime.now(pytz.timezone('America/Argentina/Buenos_Aires'))
+                msg = f"🔔 *TOP 6* ({ahora.strftime('%H:%M')})\n"
+                for r in top_6: msg += f"📈 {r['Ticker']} | ${r['Precio']} | +{r['GAP']}%\n"
+                try:
+                    greenAPI = API.GreenApi(id_ins, token_ins)
+                    greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
+                    st.success("📱 Enviado")
+                except: st.error("Error WhatsApp")
+            else:
+                st.warning("Sin resultados.")
 else:
     st.error("Archivo CSV no encontrado.")
