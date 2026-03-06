@@ -8,7 +8,7 @@ import pytz
 import os
 import altair as alt
 
-# 1. CONFIGURACIÓN DE PÁGINA
+# 1. CONFIGURACIÓN
 st.set_page_config(page_title="Scanner Momentum USA", layout="wide")
 
 # 2. ESTILO CSS
@@ -25,78 +25,73 @@ st.markdown("""
     .ticker-name { color: #007bff; font-size: 1.1rem; font-weight: bold; }
     .ticker-price { font-size: 1.2rem; font-weight: bold; color: #1f1f1f; }
     .ticker-gap { font-size: 0.95rem; font-weight: bold; color: #28a745; }
-    .vol-info { font-size: 0.75rem; color: #666; margin-top: 4px; }
     </style>
     """, unsafe_allow_html=True)
 
 RUTA_CSV = "ACTIVOS_BULLMARKET_USA.csv"
 
-st.title("🚀 Scanner Momentum Real-Time")
+st.title("🚀 Scanner Momentum USA")
 
 # 3. SIDEBAR
 with st.sidebar:
     st.header("⚙️ Filtros")
-    p_min = st.number_input("Precio Mín ($)", 0.01, 1000.0, 0.50)
-    p_max = st.number_input("Precio Máx ($)", 0.01, 1000.0, 50.0)
-    gap_min_input = st.slider("GAP Mínimo (%)", -2.0, 20.0, 0.0)
+    p_min = st.number_input("Precio Mín ($)", 0.0, 1000.0, 0.50)
+    p_max = st.number_input("Precio Máx ($)", 0.0, 1000.0, 100.0)
+    gap_min_input = st.slider("GAP Mínimo (%)", -5.0, 10.0, 0.0)
     st.divider()
     id_ins = st.text_input("ID Instancia", "7103533853")
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
     celular = st.text_input("WhatsApp", "5492664300161")
 
-# 4. LÓGICA DE ANÁLISIS (SIN FILTRO DE VOLUMEN DE HOY)
-def obtener_datos(ticker_raw):
+# 4. MOTOR DE BÚSQUEDA ROBUSTO
+def analizar_ticker(ticker_raw):
     try:
-        ticker = str(ticker_raw).split('.')[0].strip().upper()
-        stock = yf.Ticker(ticker)
+        symbol = str(ticker_raw).strip().upper()
+        t = yf.Ticker(symbol)
         
-        # Traemos historial de 1 mes (esto es muy estable)
-        df = stock.history(period="1mo")
-        if df.empty or len(df) < 2: return None
+        # Usamos period="2d" para asegurar que tenemos el cierre de ayer y el precio de hoy
+        df = t.history(period="2d")
         
-        cierre_previo = df['Close'].iloc[-1]
-        vol_promedio = df['Volume'].tail(5).mean() # Promedio de los últimos 5 días
+        if df.empty or len(df) < 2:
+            return None
+            
+        cierre_ayer = df['Close'].iloc[0]
+        precio_hoy = df['Close'].iloc[1]
+        vol_hoy = df['Volume'].iloc[1]
         
-        # Intentamos obtener el precio actual. Si falla, usamos el último cierre.
-        try:
-            precio_actual = stock.fast_info['last_price']
-        except:
-            precio_actual = cierre_previo
+        gap = ((precio_hoy - cierre_ayer) / cierre_ayer) * 100
         
-        # Si el precio actual es 0 o None, usamos el cierre previo
-        if not precio_actual or precio_actual == 0:
-            precio_actual = cierre_previo
-
-        # Cálculo de GAP: (Actual / Cierre de Ayer)
-        gap_real = ((precio_actual - cierre_previo) / cierre_previo) * 100
-        
-        # FILTROS: Solo Precio y GAP (El volumen se muestra pero no bloquea)
-        if p_min <= precio_actual <= p_max and gap_real >= gap_min_input:
-            df_plot = df[['Close']].reset_index()
+        # Filtro básico: Precio y GAP (Sin filtro de volumen para asegurar que funcione)
+        if p_min <= precio_hoy <= p_max and gap >= gap_min_input:
+            # Traemos 1 mes solo para el gráfico si pasa el filtro
+            hist_grafico = t.history(period="1mo")
+            df_plot = hist_grafico[['Close']].reset_index()
             df_plot.columns = ['x', 'y']
+            
             return {
-                "Ticker": ticker, 
-                "Precio": round(precio_actual, 2), 
-                "GAP": round(gap_real, 2), 
-                "VolProm": f"{int(vol_promedio):,}", 
+                "Ticker": symbol,
+                "Precio": round(precio_hoy, 2),
+                "GAP": round(gap, 2),
+                "Vol": f"{int(vol_hoy):,}",
                 "Data": df_plot
             }
     except:
         return None
     return None
 
-# 5. EJECUCIÓN
+# 5. INTERFAZ
 if os.path.exists(RUTA_CSV):
-    tickers_list = pd.read_csv(RUTA_CSV)['Ticker'].dropna().unique().tolist()
+    df_csv = pd.read_csv(RUTA_CSV)
+    tickers = df_csv['Ticker'].dropna().unique().tolist()
+    st.sidebar.write(f"📊 {len(tickers)} activos cargados.")
     
     if st.button("🔍 INICIAR ESCANEO"):
-        with st.spinner("Buscando GAPs..."):
-            # Aumentamos trabajadores para ir más rápido
-            with ThreadPoolExecutor(max_workers=25) as executor:
-                resultados = [r for r in list(executor.map(obtener_datos, tickers_list)) if r is not None]
+        with st.spinner("Analizando mercado..."):
+            # Bajamos workers para evitar bloqueos de Yahoo
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                resultados = [r for r in list(executor.map(analizar_ticker, tickers)) if r is not None]
             
             if resultados:
-                # Top 6 por mayor GAP
                 top_6 = sorted(resultados, key=lambda x: x['GAP'], reverse=True)[:6]
                 cols = st.columns(3)
                 
@@ -107,7 +102,7 @@ if os.path.exists(RUTA_CSV):
                                 <div class="ticker-name">{res['Ticker']}</div>
                                 <div class="ticker-price">${res['Precio']}</div>
                                 <div class="ticker-gap">GAP: {res['GAP']}%</div>
-                                <div class="vol-info">Vol Prom: {res['VolProm']}</div>
+                                <div style="font-size:0.7rem; color:#666;">Vol: {res['Vol']}</div>
                             </div>
                         """, unsafe_allow_html=True)
                         
@@ -125,17 +120,16 @@ if os.path.exists(RUTA_CSV):
                         ).properties(height=70)
                         st.altair_chart(chart, use_container_width=True)
                 
-                # Reporte WhatsApp
+                # WhatsApp
                 ahora = datetime.datetime.now(pytz.timezone('America/Argentina/Buenos_Aires'))
                 msg = f"🔔 *REPORT* ({ahora.strftime('%H:%M')})\n"
-                for r in top_6: msg += f"📈 {r['Ticker']} | ${r['Precio']} | {r['GAP']}% | Vol: {r['VolProm']}\n"
-                
+                for r in top_6: msg += f"📈 {r['Ticker']} | ${r['Precio']} | {r['GAP']}% | Vol: {r['Vol']}\n"
                 try:
                     greenAPI = API.GreenApi(id_ins, token_ins)
                     greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
-                    st.success("📱 WhatsApp enviado")
-                except: st.error("Error API WhatsApp")
+                except: pass
+                st.success("✅ Escaneo finalizado.")
             else:
-                st.warning("No se encontraron activos. Prueba bajar el GAP a 0.")
+                st.warning("No se encontraron coincidencias. Prueba poner el GAP en -2% para verificar que el sistema lee datos.")
 else:
-    st.error("CSV no encontrado.")
+    st.error("⚠️ El archivo CSV no está en GitHub.")
