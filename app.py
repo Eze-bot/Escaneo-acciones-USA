@@ -43,25 +43,29 @@ with st.sidebar:
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
     celular = st.text_input("WhatsApp", "5492664300161")
 
-# 4. MOTOR DE ESCANEO TRADICIONAL (MÁS SEGURO)
+# 4. MOTOR DE ESCANEO ROBUSTO (Usa historial de 5 días para evitar errores de fecha)
 def analizar_ticker(symbol):
     try:
         symbol = str(symbol).strip().upper()
         t = yf.Ticker(symbol)
         
-        # Obtenemos los últimos 2 días para comparar
-        hist = t.history(period="2d")
+        # Pedimos 5 días para asegurar que siempre haya datos previos
+        hist = t.history(period="5d")
         if hist.empty or len(hist) < 2:
             return None
             
-        cierre_previo = hist['Close'].iloc[-2]
+        # Tomamos el último precio y el precio inmediatamente anterior
         precio_actual = hist['Close'].iloc[-1]
+        cierre_previo = hist['Close'].iloc[-2]
         
+        # Si el mercado está cerrado, esto comparará Cierre vs Cierre anterior
+        # Si el mercado está en pre-market/abierto, comparará Actual vs Cierre de ayer
         gap = ((precio_actual - cierre_previo) / cierre_previo) * 100
         
         if p_min <= precio_actual <= p_max and gap >= gap_min_input:
-            # Si pasa, preparamos el gráfico (usando los mismos datos para no pedir más)
-            df_plot = hist[['Close']].reset_index()
+            # Reutilizamos el historial para el gráfico (últimos 30 días para estética)
+            hist_full = t.history(period="1mo")
+            df_plot = hist_full[['Close']].reset_index()
             df_plot.columns = ['x', 'y']
             
             return {
@@ -83,9 +87,9 @@ if os.path.exists(RUTA_CSV):
         bar = st.progress(0)
         resultados = []
         
-        with st.spinner("Analizando... Esto puede tardar 1-2 minutos."):
-            # Bajamos a 3 workers para evitar CUALQUIER tipo de bloqueo por parte de Yahoo
-            with ThreadPoolExecutor(max_workers=3) as executor:
+        with st.spinner("Analizando..."):
+            # Usamos 5 workers para balancear velocidad y evitar bloqueos
+            with ThreadPoolExecutor(max_workers=5) as executor:
                 for i, res in enumerate(executor.map(analizar_ticker, tickers)):
                     if res:
                         resultados.append(res)
@@ -105,22 +109,26 @@ if os.path.exists(RUTA_CSV):
                         """, unsafe_allow_html=True)
                         
                         chart = alt.Chart(res['Data']).mark_area(
-                            line={'color': '#28a745'},
+                            line={'color': '#28a745', 'strokeWidth': 2},
                             color=alt.Gradient(
                                 gradient='linear',
                                 stops=[alt.GradientStop(color='#d4edda', offset=0), alt.GradientStop(color='white', offset=1)],
                                 x1=1, y1=1, x2=1, y2=0
-                            )
-                        ).encode(x=alt.X('x:T', axis=None), y=alt.Y('y:Q', axis=None, scale=alt.Scale(zero=False))).properties(height=70)
+                            ),
+                            opacity=0.4
+                        ).encode(
+                            x=alt.X('x:T', axis=None),
+                            y=alt.Y('y:Q', axis=None, scale=alt.Scale(zero=False))
+                        ).properties(height=70)
                         st.altair_chart(chart, use_container_width=True)
                 
-                # WhatsApp opcional
+                # WhatsApp
                 try:
                     greenAPI = API.GreenApi(id_ins, token_ins)
-                    msg = "🔔 *TOP 6*\n" + "\n".join([f"📈 {r['Ticker']} | {r['GAP']}%" for r in top_6])
+                    msg = "🔔 *TOP 6 MOMENTUM*\n" + "\n".join([f"📈 {r['Ticker']} | ${r['Precio']} | {r['GAP']}%" for r in top_6])
                     greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
                 except: pass
             else:
-                st.error("No se encontraron resultados. ¿El mercado está abierto?")
+                st.error("No se encontraron resultados con los filtros actuales.")
 else:
     st.error("Archivo CSV no encontrado.")
