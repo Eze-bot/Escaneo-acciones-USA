@@ -45,7 +45,7 @@ with st.sidebar:
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
     celular = st.text_input("Número destino", "5492664300161")
 
-# 4. FUNCION OBTENER DATOS
+# 4. FUNCIÓN OBTENER DATOS
 def obtener_datos(ticker_raw):
     try:
         ticker = str(ticker_raw).split('.')[0].strip().upper()
@@ -69,28 +69,31 @@ def obtener_datos(ticker_raw):
 
 # 5. LÓGICA DE INTERFAZ
 if os.path.exists(RUTA_CSV):
+    # Cargar Tickers
     df_csv = pd.read_csv(RUTA_CSV)
     col_ticker = [c for c in df_csv.columns if 'tick' in c.lower()][0]
     tickers_list = df_csv[col_ticker].dropna().unique().tolist()
     
-    # Usamos session_state para guardar los resultados y que no se borren al tocar otros botones
+    # Inicializar estado si no existe
     if 'resultados' not in st.session_state:
         st.session_state.resultados = []
 
+    # FILA DE BOTONES
     col_btn1, col_btn2 = st.columns([1, 4])
     
     with col_btn1:
         if st.button("🔍 ESCANEAR"):
-            with st.spinner("Buscando..."):
+            with st.spinner("Analizando..."):
                 with ThreadPoolExecutor(max_workers=10) as executor:
                     res = [r for r in list(executor.map(obtener_datos, tickers_list)) if r is not None]
                     st.session_state.resultados = sorted(res, key=lambda x: x['GAP'], reverse=True)[:6]
+            if not st.session_state.resultados:
+                st.warning("Sin resultados.")
 
-    # Mostrar resultados si existen
+    # Botón de WhatsApp solo si hay datos guardados en la sesión
     if st.session_state.resultados:
-        # BOTÓN MANUAL DE WHATSAPP
         with col_btn2:
-            if st.button("📱 ENVIAR REPORTE A WHATSAPP"):
+            if st.button("📱 ENVIAR A WHATSAPP"):
                 try:
                     ahora = datetime.datetime.now(pytz.timezone('America/Argentina/Buenos_Aires'))
                     msg = f"🔔 *REPORTE MOMENTUM* ({ahora.strftime('%H:%M')})\n"
@@ -99,11 +102,12 @@ if os.path.exists(RUTA_CSV):
                     
                     greenAPI = API.GreenApi(id_ins, token_ins)
                     greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
-                    st.toast("✅ ¡Mensaje enviado con éxito!", icon='📱')
-                except Exception as e:
-                    st.error(f"Error al enviar: {e}")
+                    st.toast("✅ ¡Enviado!", icon='🚀')
+                except:
+                    st.error("Error al enviar.")
 
-        # Renderizar tarjetas
+        # MOSTRAR TARJETAS
+        st.divider()
         cols = st.columns(3)
         for i, res in enumerate(st.session_state.resultados):
             with cols[i % 3]:
@@ -122,8 +126,8 @@ if os.path.exists(RUTA_CSV):
                     opacity=0.4
                 ).encode(x=alt.X('x:T', axis=None), y=alt.Y('y:Q', axis=None, scale=alt.Scale(zero=False))).properties(height=80)
                 st.altair_chart(chart, use_container_width=True)
-    elif st.button("🔍 ESCANEAR", key="first_btn") == False:
-        st.info("Pulsa el botón 'ESCANEAR' para comenzar.")
+    else:
+        st.info("Haz clic en Escanear para ver las mejores oportunidades del mercado.")
 
 else:
-    st.error("Archivo CSV no encontrado.")
+    st.error("No se encontró el archivo CSV.")
