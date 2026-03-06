@@ -46,25 +46,39 @@ with st.sidebar:
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
     celular = st.text_input("Número", "5492664300161")
 
-# 5. LÓGICA
+# 5. LÓGICA DE PROCESAMIENTO
 def obtener_datos(ticker_raw):
     try:
         ticker = str(ticker_raw).split('.')[0].strip().upper()
         stock = yf.Ticker(ticker)
         df = stock.history(period="1mo")
-        if len(df) < 10: return None
+        if len(df) < 5: return None
+        
         precio = df['Close'].iloc[-1]
         ayer = df['Close'].iloc[-2]
         gap = ((precio - ayer) / ayer) * 100
+        
         if p_min <= precio <= p_max and gap >= gap_min:
             vol_rel = df['Volume'].iloc[-1] / df['Volume'].iloc[-11:-1].mean()
+            
+            # Limpieza de datos para el gráfico
             df_plot = df[['Close']].reset_index()
             df_plot.columns = ['Fecha', 'Precio']
-            return {"Ticker": ticker, "Precio": round(precio, 2), "GAP": round(gap, 2), "Vol": round(vol_rel, 2), "Data": df_plot}
-    except: return None
+            # Convertimos la fecha a string para que Altair no tenga problemas de zona horaria
+            df_plot['Fecha'] = df_plot['Fecha'].dt.strftime('%Y-%m-%d')
+            
+            return {
+                "Ticker": ticker, 
+                "Precio": round(precio, 2), 
+                "GAP": round(gap, 2), 
+                "Vol": round(vol_rel, 2), 
+                "Data": df_plot
+            }
+    except Exception as e:
+        return None
     return None
 
-# 6. INTERFAZ
+# 6. INTERFAZ Y RENDERIZADO
 if os.path.exists(RUTA_CSV):
     tickers_list = pd.read_csv(RUTA_CSV)['Ticker'].dropna().unique().tolist()
     st.sidebar.success(f"📂 {len(tickers_list)} Activos")
@@ -76,17 +90,35 @@ if os.path.exists(RUTA_CSV):
             
             if resultados:
                 top_6 = sorted(resultados, key=lambda x: x['GAP'], reverse=True)[:6]
-                cols = st.columns(2)
-                for i, res in enumerate(top_6):
-                    with cols[i % 2]:
-                        st.markdown(f'<div class="ticker-card"><div class="ticker-name">🚀 {res["Ticker"]}</div><div class="ticker-metrics">Precio: <b>${res["Precio"]}</b> | GAP: <span style="color:green"><b>+{res["GAP"]}%</b></span></div></div>', unsafe_allow_html=True)
-                        chart = alt.Chart(res['Data']).mark_area(
-                            line={'color': '#28a745', 'strokeWidth': 2},
-                            color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='#d4edda', offset=0), alt.GradientStop(color='white', offset=1)], x1=1, y1=1, x2=1, y2=0)
-                        ).encode(x=alt.X('Fecha:T', axis=None), y=alt.Y('Precio:Q', axis=None, scale=alt.Scale(domain=[res['Data']['Precio'].min()*0.99, res['Data']['Precio'].max()*1.01]))).properties(height=80)
-                        st.altair_chart(chart, use_container_width=True)
                 
-                # WHATSAPP CORREGIDO
+                for res in top_6:
+                    # Contenedor de tarjeta
+                    st.markdown(f"""
+                        <div class="ticker-card">
+                            <div class="ticker-name">🚀 {res['Ticker']}</div>
+                            <div class="ticker-metrics">Precio: <b>${res['Precio']}</b> | GAP: <span style="color:green"><b>+{res['GAP']}%</b></span> | Vol: <b>{res['Vol']}x</b></div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Gráfico de Área (Altair)
+                    base = alt.Chart(res['Data']).encode(
+                        x=alt.X('Fecha:T', axis=None),
+                        y=alt.Y('Precio:Q', axis=None, scale=alt.Scale(domain=[res['Data']['Precio'].min()*0.98, res['Data']['Precio'].max()*1.02]))
+                    )
+                    
+                    area = base.mark_area(
+                        line={'color': '#28a745', 'strokeWidth': 2},
+                        color=alt.Gradient(
+                            gradient='linear',
+                            stops=[alt.GradientStop(color='#d4edda', offset=0), 
+                                   alt.GradientStop(color='white', offset=1)],
+                            x1=1, y1=1, x2=1, y2=0
+                        )
+                    ).properties(height=100)
+                    
+                    st.altair_chart(area, use_container_width=True)
+                
+                # WHATSAPP
                 ahora = datetime.datetime.now(pytz.timezone('America/Argentina/Buenos_Aires'))
                 msg = f"🔔 *TOP 6 MOMENTUM* ({ahora.strftime('%H:%M')})\n━━━━━━━━━━━━━━━━━━\n"
                 for r in top_6:
@@ -99,6 +131,6 @@ if os.path.exists(RUTA_CSV):
                 except:
                     st.error("Error API WhatsApp")
             else:
-                st.warning("Sin resultados.")
+                st.warning("Sin resultados con estos filtros.")
 else:
-    st.error("Falta CSV.")
+    st.error("Archivo CSV no encontrado.")
