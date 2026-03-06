@@ -35,34 +35,32 @@ st.title("🚀 Scanner Momentum USA")
 # 3. SIDEBAR
 with st.sidebar:
     st.header("⚙️ Filtros")
-    p_min = st.number_input("Precio Mín ($)", 0.0, 1000.0, 0.10)
-    p_max = st.number_input("Precio Máx ($)", 0.0, 2000.0, 500.0)
-    gap_min_input = st.slider("GAP Mínimo (%)", -10.0, 20.0, -2.0)
+    p_min = st.number_input("Precio Mín ($)", 0.0, 5000.0, 0.10)
+    p_max = st.number_input("Precio Máx ($)", 0.0, 5000.0, 1000.0)
+    gap_min_input = st.slider("GAP Mínimo (%)", -10.0, 20.0, -5.0)
     st.divider()
     id_ins = st.text_input("ID Instancia", "7103533853")
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
     celular = st.text_input("WhatsApp", "5492664300161")
 
-# 4. MOTOR DE BÚSQUEDA ULTRA-SIMPLE
+# 4. MOTOR DE ESCANEO TRADICIONAL (MÁS SEGURO)
 def analizar_ticker(symbol):
     try:
         symbol = str(symbol).strip().upper()
         t = yf.Ticker(symbol)
         
-        # Intentamos obtener info básica primero
-        info = t.basic_info
-        precio_actual = info['last_price']
-        cierre_previo = info['previous_close']
-        
-        if not precio_actual or not cierre_previo:
+        # Obtenemos los últimos 2 días para comparar
+        hist = t.history(period="2d")
+        if hist.empty or len(hist) < 2:
             return None
             
+        cierre_previo = hist['Close'].iloc[-2]
+        precio_actual = hist['Close'].iloc[-1]
+        
         gap = ((precio_actual - cierre_previo) / cierre_previo) * 100
         
-        # Filtro de Precio y GAP
         if p_min <= precio_actual <= p_max and gap >= gap_min_input:
-            # Solo si pasa el filtro, buscamos el historial para el gráfico
-            hist = t.history(period="1mo")
+            # Si pasa, preparamos el gráfico (usando los mismos datos para no pedir más)
             df_plot = hist[['Close']].reset_index()
             df_plot.columns = ['x', 'y']
             
@@ -79,29 +77,23 @@ def analizar_ticker(symbol):
 # 5. EJECUCIÓN
 if os.path.exists(RUTA_CSV):
     tickers = pd.read_csv(RUTA_CSV)['Ticker'].dropna().unique().tolist()
-    st.sidebar.write(f"📊 {len(tickers)} activos en lista.")
+    st.sidebar.write(f"📊 {len(tickers)} activos detectados.")
     
-    if st.button("🔍 INICIAR ESCANEO"):
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+    if st.button("🔍 EJECUTAR ESCANEO"):
+        bar = st.progress(0)
+        resultados = []
         
-        with st.spinner("Escaneando..."):
-            resultados = []
-            # Escaneamos en grupos pequeños para evitar bloqueos
-            with ThreadPoolExecutor(max_workers=5) as executor:
+        with st.spinner("Analizando... Esto puede tardar 1-2 minutos."):
+            # Bajamos a 3 workers para evitar CUALQUIER tipo de bloqueo por parte de Yahoo
+            with ThreadPoolExecutor(max_workers=3) as executor:
                 for i, res in enumerate(executor.map(analizar_ticker, tickers)):
                     if res:
                         resultados.append(res)
-                    # Actualizar barra de progreso cada 10 tickers
-                    if i % 10 == 0:
-                        progress_bar.progress(min((i + 1) / len(tickers), 1.0))
-            
-            progress_bar.empty()
+                    bar.progress((i + 1) / len(tickers))
             
             if resultados:
                 top_6 = sorted(resultados, key=lambda x: x['GAP'], reverse=True)[:6]
                 cols = st.columns(3)
-                
                 for i, res in enumerate(top_6):
                     with cols[i % 3]:
                         st.markdown(f"""
@@ -113,28 +105,22 @@ if os.path.exists(RUTA_CSV):
                         """, unsafe_allow_html=True)
                         
                         chart = alt.Chart(res['Data']).mark_area(
-                            line={'color': '#28a745', 'strokeWidth': 2},
+                            line={'color': '#28a745'},
                             color=alt.Gradient(
                                 gradient='linear',
                                 stops=[alt.GradientStop(color='#d4edda', offset=0), alt.GradientStop(color='white', offset=1)],
                                 x1=1, y1=1, x2=1, y2=0
-                            ),
-                            opacity=0.4
-                        ).encode(
-                            x=alt.X('x:T', axis=None),
-                            y=alt.Y('y:Q', axis=None, scale=alt.Scale(zero=False))
-                        ).properties(height=70)
+                            )
+                        ).encode(x=alt.X('x:T', axis=None), y=alt.Y('y:Q', axis=None, scale=alt.Scale(zero=False))).properties(height=70)
                         st.altair_chart(chart, use_container_width=True)
                 
-                # WhatsApp
+                # WhatsApp opcional
                 try:
-                    ahora = datetime.datetime.now(pytz.timezone('America/Argentina/Buenos_Aires'))
-                    msg = f"🔔 *REPORT* ({ahora.strftime('%H:%M')})\n"
-                    for r in top_6: msg += f"📈 {r['Ticker']} | ${r['Precio']} | {r['GAP']}%\n"
                     greenAPI = API.GreenApi(id_ins, token_ins)
+                    msg = "🔔 *TOP 6*\n" + "\n".join([f"📈 {r['Ticker']} | {r['GAP']}%" for r in top_6])
                     greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
                 except: pass
             else:
-                st.warning("Sin resultados. Intenta ampliar el rango de precio o bajar el GAP.")
+                st.error("No se encontraron resultados. ¿El mercado está abierto?")
 else:
-    st.error("CSV no encontrado.")
+    st.error("Archivo CSV no encontrado.")
