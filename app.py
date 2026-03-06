@@ -43,92 +43,71 @@ with st.sidebar:
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
     celular = st.text_input("WhatsApp", "5492664300161")
 
-# 4. MOTOR DE ESCANEO ROBUSTO (Usa historial de 5 días para evitar errores de fecha)
+# 4. MOTOR DE ESCANEO
 def analizar_ticker(symbol):
     try:
         symbol = str(symbol).strip().upper()
-        t = yf.Ticker(symbol)
+        if not symbol or len(symbol) > 6: return None # Evitar basura en el CSV
         
-        # Pedimos 5 días para asegurar que siempre haya datos previos
+        t = yf.Ticker(symbol)
         hist = t.history(period="5d")
-        if hist.empty or len(hist) < 2:
-            return None
+        
+        if hist.empty or len(hist) < 2: return None
             
-        # Tomamos el último precio y el precio inmediatamente anterior
         precio_actual = hist['Close'].iloc[-1]
         cierre_previo = hist['Close'].iloc[-2]
-        
-        # Si el mercado está cerrado, esto comparará Cierre vs Cierre anterior
-        # Si el mercado está en pre-market/abierto, comparará Actual vs Cierre de ayer
         gap = ((precio_actual - cierre_previo) / cierre_previo) * 100
         
         if p_min <= precio_actual <= p_max and gap >= gap_min_input:
-            # Reutilizamos el historial para el gráfico (últimos 30 días para estética)
             hist_full = t.history(period="1mo")
             df_plot = hist_full[['Close']].reset_index()
             df_plot.columns = ['x', 'y']
-            
-            return {
-                "Ticker": symbol,
-                "Precio": round(precio_actual, 2),
-                "GAP": round(gap, 2),
-                "Data": df_plot
-            }
-    except:
-        return None
+            return {"Ticker": symbol, "Precio": round(precio_actual, 2), "GAP": round(gap, 2), "Data": df_plot}
+    except: return None
     return None
 
-# 5. EJECUCIÓN
+# 5. CARGA INTELIGENTE DE CSV
 if os.path.exists(RUTA_CSV):
-    tickers = pd.read_csv(RUTA_CSV)['Ticker'].dropna().unique().tolist()
-    st.sidebar.write(f"📊 {len(tickers)} activos detectados.")
-    
-    if st.button("🔍 EJECUTAR ESCANEO"):
-        bar = st.progress(0)
-        resultados = []
+    try:
+        # Intentar leer con coma, si falla intentar con punto y coma
+        try:
+            df_csv = pd.read_csv(RUTA_CSV)
+        except:
+            df_csv = pd.read_csv(RUTA_CSV, sep=';')
         
-        with st.spinner("Analizando..."):
-            # Usamos 5 workers para balancear velocidad y evitar bloqueos
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                for i, res in enumerate(executor.map(analizar_ticker, tickers)):
-                    if res:
-                        resultados.append(res)
-                    bar.progress((i + 1) / len(tickers))
+        # Buscar la columna que se parezca a "Ticker" (ignora mayúsculas y espacios)
+        col_ticker = [c for c in df_csv.columns if 'tick' in c.lower()][0]
+        tickers = df_csv[col_ticker].dropna().unique().tolist()
+        st.sidebar.success(f"📊 {len(tickers)} activos cargados.")
+        
+        if st.button("🔍 EJECUTAR ESCANEO"):
+            bar = st.progress(0)
+            resultados = []
             
-            if resultados:
-                top_6 = sorted(resultados, key=lambda x: x['GAP'], reverse=True)[:6]
-                cols = st.columns(3)
-                for i, res in enumerate(top_6):
-                    with cols[i % 3]:
-                        st.markdown(f"""
-                            <div class="ticker-card">
-                                <div class="ticker-name">{res['Ticker']}</div>
-                                <div class="ticker-price">${res['Precio']}</div>
-                                <div class="ticker-gap">GAP: {res['GAP']}%</div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        
-                        chart = alt.Chart(res['Data']).mark_area(
-                            line={'color': '#28a745', 'strokeWidth': 2},
-                            color=alt.Gradient(
-                                gradient='linear',
-                                stops=[alt.GradientStop(color='#d4edda', offset=0), alt.GradientStop(color='white', offset=1)],
-                                x1=1, y1=1, x2=1, y2=0
-                            ),
-                            opacity=0.4
-                        ).encode(
-                            x=alt.X('x:T', axis=None),
-                            y=alt.Y('y:Q', axis=None, scale=alt.Scale(zero=False))
-                        ).properties(height=70)
-                        st.altair_chart(chart, use_container_width=True)
+            with st.spinner("Analizando..."):
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    for i, res in enumerate(executor.map(analizar_ticker, tickers)):
+                        if res: resultados.append(res)
+                        bar.progress((i + 1) / len(tickers))
                 
-                # WhatsApp
-                try:
-                    greenAPI = API.GreenApi(id_ins, token_ins)
-                    msg = "🔔 *TOP 6 MOMENTUM*\n" + "\n".join([f"📈 {r['Ticker']} | ${r['Precio']} | {r['GAP']}%" for r in top_6])
-                    greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
-                except: pass
-            else:
-                st.error("No se encontraron resultados con los filtros actuales.")
+                if resultados:
+                    top_6 = sorted(resultados, key=lambda x: x['GAP'], reverse=True)[:6]
+                    cols = st.columns(3)
+                    for i, res in enumerate(top_6):
+                        with cols[i % 3]:
+                            st.markdown(f'<div class="ticker-card"><div class="ticker-name">{res["Ticker"]}</div><div class="ticker-price">${res["Precio"]}</div><div class="ticker-gap">GAP: {res["GAP"]}%</div></div>', unsafe_allow_html=True)
+                            chart = alt.Chart(res['Data']).mark_area(line={'color': '#28a745'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='#d4edda', offset=0), alt.GradientStop(color='white', offset=1)], x1=1, y1=1, x2=1, y2=0), opacity=0.4).encode(x=alt.X('x:T', axis=None), y=alt.Y('y:Q', axis=None, scale=alt.Scale(zero=False))).properties(height=70)
+                            st.altair_chart(chart, use_container_width=True)
+                    
+                    # WhatsApp
+                    try:
+                        greenAPI = API.GreenApi(id_ins, token_ins)
+                        msg = "🔔 *TOP 6*\n" + "\n".join([f"📈 {r['Ticker']} | {r['GAP']}%" for r in top_6])
+                        greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
+                    except: pass
+                else:
+                    st.error("No se encontraron coincidencias. Revisa si los símbolos en tu CSV son correctos (ej: AAPL, TSLA).")
+    except Exception as e:
+        st.error(f"Error al leer el CSV: {e}")
 else:
-    st.error("Archivo CSV no encontrado.")
+    st.error("Archivo CSV no encontrado en el repositorio.")
