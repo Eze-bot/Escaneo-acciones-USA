@@ -21,7 +21,7 @@ st.markdown("""
         border-radius: 10px;
         padding: 12px;
         margin-bottom: 0px;
-        border-left: 5px solid #28a745;
+        border-left: 5px solid #2196F3;
     }
     .ticker-name { color: #007bff; font-size: 1.1rem; font-weight: bold; }
     .ticker-price { font-size: 1.2rem; font-weight: bold; color: #1f1f1f; }
@@ -31,31 +31,27 @@ st.markdown("""
 
 RUTA_CSV = "ACTIVOS_BULLMARKET_USA.csv"
 
-st.title("🚀 Scanner Anti-Bloqueo USA")
+st.title("🚀 Scanner Momentum USA")
 
 # 3. SIDEBAR
 with st.sidebar:
     st.header("⚙️ Filtros")
     p_min = st.number_input("Precio Mín ($)", 0.0, 5000.0, 0.10)
-    p_max = st.number_input("Precio Máx ($)", 0.0, 5000.0, 1000.0)
-    gap_min_input = st.slider("GAP Mínimo (%)", -10.0, 20.0, -2.0)
+    p_max = st.number_input("Precio Máx ($)", 0.0, 5000.0, 2000.0)
+    gap_min_input = st.slider("GAP Mínimo (%)", -15.0, 15.0, -2.0)
     st.divider()
     id_ins = st.text_input("ID Instancia", "7103533853")
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
     celular = st.text_input("WhatsApp", "5492664300161")
 
-# 4. FUNCIÓN DE EXTRACCIÓN UNITARIA (CON USER-AGENT DINÁMICO)
-def extraer_uno(symbol):
+# 4. FUNCIÓN DE EXTRACCIÓN (Usa el cierre más reciente disponible)
+def extraer_datos(symbol):
     try:
-        symbol = str(symbol).strip().upper()
-        # Creamos el objeto Ticker
-        t = yf.Ticker(symbol)
-        # Pedimos solo 5 días para no ser pesados
-        hist = t.history(period="5d", interval="1d")
+        t = yf.Ticker(symbol.strip().upper())
+        # Pedimos 7 días para cubrir cualquier hueco de fin de semana
+        hist = t.history(period="7d")
+        if len(hist) < 2: return None
         
-        if hist.empty or len(hist) < 2:
-            return None
-            
         precio_actual = hist['Close'].iloc[-1]
         cierre_previo = hist['Close'].iloc[-2]
         gap = ((precio_actual - cierre_previo) / cierre_previo) * 100
@@ -64,68 +60,63 @@ def extraer_uno(symbol):
             df_plot = hist[['Close']].reset_index()
             df_plot.columns = ['x', 'y']
             return {"Ticker": symbol, "Precio": round(precio_actual, 2), "GAP": round(gap, 2), "Data": df_plot}
-    except:
-        return None
+    except: return None
     return None
 
-# 5. LÓGICA DE ESCANEO POR LOTES
+# 5. LÓGICA DE ESCANEO ALEATORIO
 if os.path.exists(RUTA_CSV):
-    try:
-        df_csv = pd.read_csv(RUTA_CSV)
-        col_ticker = [c for c in df_csv.columns if 'tick' in c.lower()][0]
-        tickers_total = df_csv[col_ticker].dropna().unique().tolist()
+    df_csv = pd.read_csv(RUTA_CSV)
+    col_ticker = [c for c in df_csv.columns if 'tick' in c.lower()][0]
+    tickers_base = df_csv[col_ticker].dropna().unique().tolist()
+    
+    if st.button("🔍 ESCANEAR MERCADO"):
+        # Mezclamos la lista para no analizar siempre los mismos (A, B, C...)
+        random.shuffle(tickers_base)
+        muestra = tickers_base[:70] # Analizamos 70 activos al azar
         
-        st.sidebar.info(f"📊 {len(tickers_total)} activos en base.")
-
-        if st.button("🔍 INICIAR ESCANEO (Modo Seguro)"):
-            resultados = []
-            bar = st.progress(0)
-            status = st.empty()
+        resultados = []
+        bar = st.progress(0)
+        status = st.empty()
+        
+        for i, tkr in enumerate(muestra):
+            status.text(f"Analizando {tkr}... ({i+1}/{len(muestra)})")
+            res = extraer_datos(tkr)
+            if res:
+                resultados.append(res)
             
-            # Solo escaneamos los primeros 50 para garantizar que Yahoo no nos bloquee la sesión
-            tickers_a_escanear = tickers_total[:50] 
+            # Pequeña pausa para no ser bloqueados
+            time.sleep(0.1)
+            bar.progress((i + 1) / len(muestra))
             
-            for i, ticker in enumerate(tickers_a_escanear):
-                res = extraer_uno(ticker)
-                if res:
-                    resultados.append(res)
-                
-                # PAUSA ALEATORIA: Fundamental para que Yahoo no nos bloquee
-                # Entre 0.2 y 0.5 segundos por cada ticker
-                time.sleep(random.uniform(0.2, 0.5))
-                
-                # Actualizar barra
-                porcentaje = (i + 1) / len(tickers_a_escanear)
-                bar.progress(porcentaje)
-                status.text(f"Analizando {ticker}... ({i+1}/{len(tickers_a_escanear)})")
-
-            status.empty()
-            
-            if resultados:
-                top_6 = sorted(resultados, key=lambda x: x['GAP'], reverse=True)[:6]
-                cols = st.columns(3)
-                for j, res in enumerate(top_6):
-                    with cols[j % 3]:
-                        st.markdown(f"""
-                            <div class="ticker-card">
-                                <div class="ticker-name">{res['Ticker']}</div>
-                                <div class="ticker-price">${res['Precio']}</div>
-                                <div class="ticker-gap">GAP: {res['GAP']}%</div>
+        status.empty()
+        
+        if resultados:
+            top_6 = sorted(resultados, key=lambda x: x['GAP'], reverse=True)[:6]
+            cols = st.columns(3)
+            for j, res in enumerate(top_6):
+                with cols[j % 3]:
+                    st.markdown(f"""
+                        <div class="ticker-card">
+                            <div class="ticker-name">{res['Ticker']}</div>
+                            <div class="ticker-price">${res['Precio']}</div>
+                            <div class="ticker-gap" style="color:{'#28a745' if res['GAP']>=0 else '#d93025'};">
+                                GAP: {res['GAP']}%
                             </div>
-                        """, unsafe_allow_html=True)
-                        chart = alt.Chart(res['Data']).mark_area(line={'color': '#28a745'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='#d4edda', offset=0), alt.GradientStop(color='white', offset=1)], x1=1, y1=1, x2=1, y2=0)).encode(x=alt.X('x:T', axis=None), y=alt.Y('y:Q', axis=None, scale=alt.Scale(zero=False))).properties(height=70)
-                        st.altair_chart(chart, use_container_width=True)
-                
-                # Envío WhatsApp
-                try:
-                    greenAPI = API.GreenApi(id_ins, token_ins)
-                    msg = f"🔔 *TOP 6*\n" + "\n".join([f"📈 {r['Ticker']} | {r['GAP']}%" for r in top_6])
-                    greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
-                except: pass
-            else:
-                st.warning("No se detectaron GAPs. Si la barra llegó al final, intenta subir el precio máximo o bajar el GAP mínimo.")
-                
-    except Exception as e:
-        st.error(f"Error en CSV: {e}")
+                        </div>
+                    """, unsafe_allow_html=True)
+                    chart = alt.Chart(res['Data']).mark_area(
+                        line={'color': '#2196F3'},
+                        color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='#bbdefb', offset=0), alt.GradientStop(color='white', offset=1)], x1=1, y1=1, x2=1, y2=0)
+                    ).encode(x=alt.X('x:T', axis=None), y=alt.Y('y:Q', axis=None, scale=alt.Scale(zero=False))).properties(height=70)
+                    st.altair_chart(chart, use_container_width=True)
+            
+            # WhatsApp
+            try:
+                greenAPI = API.GreenApi(id_ins, token_ins)
+                msg = f"🔔 *ALERTA SCANNER*\n" + "\n".join([f"📈 {r['Ticker']} | {r['GAP']}%" for r in top_6])
+                greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
+            except: pass
+        else:
+            st.warning("No se encontraron activos con ese GAP en la muestra aleatoria. ¡Prueba bajar el GAP a -5%!")
 else:
     st.error("Archivo CSV no encontrado.")
