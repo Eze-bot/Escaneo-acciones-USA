@@ -80,7 +80,7 @@ def analizar_pro(symbol):
 # ─────────────────────────────────────────────────────────────
 # 3. INTERFAZ Y SIDEBAR
 # ─────────────────────────────────────────────────────────────
-st.title("📡 Quantum Momentum Scanner 2.0")
+st.title("📡 Analisis activos / Oportunidades")
 
 with st.sidebar:
     st.header("🛠️ Filtros Técnicos")
