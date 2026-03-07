@@ -351,9 +351,21 @@ def calc_vwap(df):
 # ─────────────────────────────────────────────────────────────
 # 5. FUNCIÓN PRINCIPAL DE ANÁLISIS
 # ─────────────────────────────────────────────────────────────
+def limpiar_ticker(ticker_raw):
+    """Limpia el ticker eliminando caracteres inválidos que vienen del CSV"""
+    t = str(ticker_raw).strip()
+    t = t.replace('$', '')      # quitar signo $ (ej: $BF → BF)
+    t = t.replace(' ', '')      # quitar espacios internos
+    t = t.split('.')[0]         # quitar sufijos como .B en BRK.B
+    t = t.split('/')[0]         # quitar sufijos como /B en BRK/B
+    t = t.upper()
+    return t if len(t) >= 1 else None
+
 def obtener_datos(ticker_raw):
     try:
-        ticker = str(ticker_raw).split('.')[0].strip().upper()
+        ticker = limpiar_ticker(ticker_raw)
+        if not ticker:
+            return None
         stock  = yf.Ticker(ticker)
 
         # ── A) Datos diarios (1 mes) para indicadores de tendencia ──
@@ -380,42 +392,52 @@ def obtener_datos(ticker_raw):
 
         # RSI (14) sobre datos diarios
         rsi_series = calc_rsi(df_d['Close'], 14)
-        rsi        = round(rsi_series.iloc[-1], 1) if not rsi_series.empty else None
+        rsi_raw    = rsi_series.iloc[-1]
+        rsi        = round(float(rsi_raw), 1) if pd.notna(rsi_raw) else None
 
         # EMAs sobre datos diarios
-        ema9  = calc_ema(df_d['Close'], 9).iloc[-1]
-        ema21 = calc_ema(df_d['Close'], 21).iloc[-1]
-        ema50 = calc_ema(df_d['Close'], 50).iloc[-1] if len(df_d) >= 50 else None
+        ema9  = float(calc_ema(df_d['Close'], 9).iloc[-1])
+        ema21 = float(calc_ema(df_d['Close'], 21).iloc[-1])
+        ema50_raw = calc_ema(df_d['Close'], 50).iloc[-1]
+        ema50 = float(ema50_raw) if pd.notna(ema50_raw) else None
 
-        # Bollinger Bands
-        bb_low, bb_mid, bb_up = calc_bollinger(df_d['Close'])
-        bb_lower = bb_low.iloc[-1]
-        bb_upper = bb_up.iloc[-1]
+        # Bollinger Bands (requiere >= 20 velas)
+        bb_lower, bb_upper = None, None
+        if len(df_d) >= 20:
+            bb_low, _, bb_up = calc_bollinger(df_d['Close'])
+            bl = bb_low.iloc[-1]; bu = bb_up.iloc[-1]
+            bb_lower = float(bl) if pd.notna(bl) else None
+            bb_upper = float(bu) if pd.notna(bu) else None
 
         # ATR (14) — volatilidad esperada
-        atr_val = calc_atr(df_d).iloc[-1]
-        atr_pct = round((atr_val / precio_actual) * 100, 2) if precio_actual > 0 else None
+        atr_raw = calc_atr(df_d).iloc[-1]
+        atr_pct = round((float(atr_raw) / precio_actual) * 100, 2) if pd.notna(atr_raw) and precio_actual > 0 else None
 
-        # Volumen vs promedio 20 días
-        vol_actual  = df_d['Volume'].iloc[-1]
-        vol_avg_20  = df_d['Volume'].rolling(20).mean().iloc[-1]
-        vol_ratio   = round(vol_actual / vol_avg_20, 1) if vol_avg_20 > 0 else 1.0
+        # Volumen vs promedio (ventana adaptable según datos disponibles)
+        vol_actual = float(df_d['Volume'].iloc[-1])
+        vol_window = min(20, len(df_d) - 1)
+        vol_avg    = float(df_d['Volume'].rolling(vol_window).mean().iloc[-1])
+        vol_ratio  = round(vol_actual / vol_avg, 1) if pd.notna(vol_avg) and vol_avg > 0 else 1.0
 
         # VWAP (sobre datos de 15m)
         vwap_val = None
         if not df_15.empty and len(df_15) > 5:
-            vwap_series = calc_vwap(df_15)
-            vwap_val    = round(vwap_series.iloc[-1], 4)
+            try:
+                v = calc_vwap(df_15).iloc[-1]
+                vwap_val = round(float(v), 4) if pd.notna(v) else None
+            except Exception:
+                vwap_val = None
 
         # Variación semanal (5 días)
-        precio_5d  = df_d['Close'].iloc[-6] if len(df_d) >= 6 else df_d['Close'].iloc[0]
-        var_semana = round(((precio_actual - precio_5d) / precio_5d) * 100, 2)
+        idx_5d     = min(5, len(df_d) - 1)
+        precio_5d  = float(df_d['Close'].iloc[-(idx_5d + 1)])
+        var_semana = round(((precio_actual - precio_5d) / precio_5d) * 100, 2) if precio_5d > 0 else 0.0
 
         # Rango del día
-        min_dia = round(df_d['Low'].iloc[-1], 4)
-        max_dia = round(df_d['High'].iloc[-1], 4)
-        min_mes = round(df_d['Low'].min(), 4)
-        max_mes = round(df_d['High'].max(), 4)
+        min_dia = round(float(df_d['Low'].iloc[-1]),  4)
+        max_dia = round(float(df_d['High'].iloc[-1]), 4)
+        min_mes = round(float(df_d['Low'].min()),  4)
+        max_mes = round(float(df_d['High'].max()), 4)
 
         # ── D) PRE-MERCADO REAL ───────────────────────────────────
         premarket_pct = None
@@ -424,15 +446,16 @@ def obtener_datos(ticker_raw):
         es_premarked  = 4 <= ahora_ny.hour < 9
 
         if not df_15.empty and es_premarked:
-            # Separar sesión pre-mercado de hoy
-            hoy_str = ahora_ny.strftime('%Y-%m-%d')
-            df_pm   = df_15[
-                (df_15.index.tz_convert(ZONA_NY).strftime('%Y-%m-%d') == hoy_str) &
-                (df_15.index.tz_convert(ZONA_NY).hour < 9)
-            ]
-            if not df_pm.empty:
-                premarket_px  = round(df_pm['Close'].iloc[-1], 4)
-                premarket_pct = round(((premarket_px - cierre_ayer) / cierre_ayer) * 100, 2)
+            try:
+                hoy_str = ahora_ny.strftime('%Y-%m-%d')
+                idx_ny  = df_15.index.tz_convert(ZONA_NY)
+                mask    = (idx_ny.strftime('%Y-%m-%d') == hoy_str) & (idx_ny.hour < 9)
+                df_pm   = df_15[mask]
+                if not df_pm.empty:
+                    premarket_px  = round(float(df_pm['Close'].iloc[-1]), 4)
+                    premarket_pct = round(((premarket_px - cierre_ayer) / cierre_ayer) * 100, 2)
+            except Exception:
+                pass
 
         # ── E) SEÑALES TÉCNICAS ──────────────────────────────────
         señales_compra = []
@@ -535,8 +558,8 @@ def obtener_datos(ticker_raw):
             "EMA9"           : round(ema9, 4),
             "EMA21"          : round(ema21, 4),
             "EMA50"          : round(ema50, 4) if ema50 is not None else None,
-            "BBLower"        : round(bb_lower, 4) if pd.notna(bb_lower) else None,
-            "BBUpper"        : round(bb_upper, 4) if pd.notna(bb_upper) else None,
+            "BBLower"        : round(bb_lower, 4) if bb_lower is not None else None,
+            "BBUpper"        : round(bb_upper, 4) if bb_upper is not None else None,
             "PremarketPct"   : premarket_pct,
             "PremarketPx"    : premarket_px,
             "MinDia"         : min_dia,
@@ -640,7 +663,9 @@ def build_chart(df_graf, tendencia):
     # Barras de volumen (normalizadas para aparecer en la base)
     vol_max = df_graf['volume'].max()
     df_graf = df_graf.copy()
-    df_graf['vol_norm'] = df_graf['volume'] / vol_max if vol_max > 0 else 0
+    df_graf['vol_norm'] = (df_graf['volume'] / vol_max).fillna(0) if vol_max > 0 else 0
+    df_graf['ema9']  = pd.to_numeric(df_graf['ema9'],  errors='coerce').ffill()
+    df_graf['ema21'] = pd.to_numeric(df_graf['ema21'], errors='coerce').ffill()
 
     # Precio mínimo y máximo para escalar volumen en eje Y del precio
     p_min_g = df_graf['close'].min()
@@ -714,7 +739,8 @@ if not os.path.exists(RUTA_CSV):
 df_csv     = pd.read_csv(RUTA_CSV)
 df_csv.columns = df_csv.columns.str.strip().str.upper()
 col_ticker = [c for c in df_csv.columns if 'TICK' in c][0]
-col_tipo   = [c for c in df_csv.columns if 'TIPO' in c][0] if any('TIPO' in c for c in df_csv.columns) else None
+col_tipo_matches = [c for c in df_csv.columns if 'TIPO' in c or 'TYPE' in c]
+col_tipo = col_tipo_matches[0] if col_tipo_matches else None
 
 # Filtrar por tipo si corresponde
 if filtro_tipo != "TODOS" and col_tipo:
