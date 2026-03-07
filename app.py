@@ -11,14 +11,58 @@ import altair as alt
 import time
 
 # ─────────────────────────────────────────────────────────────
-# 1. CONFIGURACIÓN Y ESTILOS (DARK MODE)
+# 1. CONFIGURACIÓN Y ESTILOS (DARK MODE + CONTRASTE)
 # ─────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Scanner Quantum 2.0", layout="wide")
 
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+    
     .stApp { background: #0d1117; color: #e6edf3; }
+    
+    /* Título principal con mayor impacto */
+    h1 {
+        color: #ffffff !important;
+        font-family: 'Space Mono', monospace;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }
+
+    /* ESTILO DE BOTONES DE ALTO CONTRASTE */
+    div.stButton > button {
+        width: 100%;
+        border-radius: 8px;
+        height: 3em;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        transition: all 0.3s ease;
+    }
+
+    /* Botón ESCANEO (Azul Vibrante) */
+    div.stButton > button:first-child {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
+    }
+    
+    div.stButton > button:hover {
+        background-color: #0056b3;
+        box-shadow: 0 6px 20px rgba(0, 123, 255, 0.5);
+        transform: translateY(-2px);
+    }
+
+    /* Botón WHATSAPP (Verde Neón) */
+    /* Identificamos el segundo botón por su posición en la UI cuando aparece */
+    div.stButton > button[kind="secondary"] {
+        background-color: #28a745 !important;
+        color: white !important;
+        border: none !important;
+        box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3) !important;
+    }
+
+    /* TARJETAS */
     .ticker-card {
         background: #161b22;
         border: 1px solid #30363d;
@@ -44,16 +88,12 @@ def analizar_pro(symbol):
     try:
         symbol = str(symbol).split('.')[0].strip().upper()
         tk = yf.Ticker(symbol)
-        # Pedimos 60 días para calcular medias móviles correctamente
         df = tk.history(period="60d", interval="1d")
-        
         if len(df) < 25: return None
 
-        # INDICADORES
         df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
         df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
         
-        # RSI (14)
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -65,7 +105,6 @@ def analizar_pro(symbol):
         gap = ((precio - ayer) / ayer) * 100
         rsi_val = df['RSI'].iloc[-1]
         
-        # Lógica de señales
         bullish = precio > df['EMA9'].iloc[-1] > df['EMA21'].iloc[-1]
         
         return {
@@ -73,7 +112,7 @@ def analizar_pro(symbol):
             "RSI": round(rsi_val, 1), "EMA9": round(df['EMA9'].iloc[-1], 2),
             "Tendencia": "Alcista" if bullish else "Neutral/Bajista",
             "Color": "#3fb950" if gap > 0 else "#f85149",
-            "Data": df.tail(30).reset_index() # Solo últimos 30 días para el gráfico
+            "Data": df.tail(30).reset_index()
         }
     except: return None
 
@@ -101,17 +140,18 @@ if os.path.exists(RUTA_CSV):
 
     c1, c2 = st.columns([1, 4])
     with c1:
-        if st.button("🚀 ESCANEO"):
+        # El botón de escaneo usa el estilo primario (Azul)
+        if st.button("🚀 ESCANEO", type="primary"):
             with st.spinner("Analizando indicadores..."):
                 with ThreadPoolExecutor(max_workers=10) as executor:
                     res = [r for r in list(executor.map(analizar_pro, tickers)) if r is not None]
-                    # Filtro de usuario aplicado aquí
                     res = [r for r in res if p_min <= r['Precio'] <= p_max and r['GAP'] >= gap_min]
                     st.session_state.resultados_v2 = sorted(res, key=lambda x: x['GAP'], reverse=True)[:6]
 
     if st.session_state.resultados_v2:
         with c2:
-            if st.button("📱 ENVIAR SEÑALES A WHATSAPP"):
+            # El botón de WhatsApp usa un estilo secundario que hemos pintado de VERDE en el CSS
+            if st.button("📱 ENVIAR SEÑALES A WHATSAPP", type="secondary"):
                 try:
                     msg = f"🚀 *SCANN QUANTUM 2.0*\n"
                     for r in st.session_state.resultados_v2:
@@ -138,7 +178,6 @@ if os.path.exists(RUTA_CSV):
                 </div>
                 """, unsafe_allow_html=True)
 
-                # GRÁFICO AVANZADO CON EMA
                 base = alt.Chart(res['Data']).encode(x=alt.X('Date:T', axis=None))
                 linea_precio = base.mark_line(color='#58a6ff', strokeWidth=2).encode(y=alt.Y('Close:Q', scale=alt.Scale(zero=False)))
                 linea_ema9 = base.mark_line(color='#f0c040', strokeDash=[4,2]).encode(y='EMA9:Q')
@@ -147,6 +186,6 @@ if os.path.exists(RUTA_CSV):
                 st.altair_chart(chart, use_container_width=True)
                 st.markdown("<p style='font-size:0.7rem; color:#8b949e; margin-top:-15px'>━ Precio | ╌ EMA9</p>", unsafe_allow_html=True)
     else:
-        st.info("Sistema listo. Pulsa 'Escaneo Pro' para procesar indicadores técnicos.")
+        st.info("Sistema listo. Pulsa 'Escaneo' para procesar indicadores técnicos.")
 else:
     st.error("CSV no encontrado.")
