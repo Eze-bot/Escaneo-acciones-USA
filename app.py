@@ -863,127 +863,175 @@ if st.session_state.resultados:
     </div>
     """, unsafe_allow_html=True)
 
-    # Tarjetas en grilla 3 columnas
-    cols = st.columns(3)
+    # ── Renderizar tarjetas con st.columns() usando widgets nativos de Streamlit ──
+    # Se evita st.markdown(html) dentro de columnas porque Streamlit lo sanitiza.
+    # En su lugar se usa st.metric, st.caption y st.progress nativos + un bloque
+    # HTML mínimo solo para el encabezado, que sí renderiza correctamente.
 
+    cols = st.columns(3)
     for i, r in enumerate(res_list):
         with cols[i % 3]:
-
-            # Colores dinámicos
-            acc_color = r['ColorTendencia']
-            gap_cls   = "gap-positive" if r['GAP'] >= 0 else "gap-negative"
-            rsi_cls   = color_rsi(r['RSI'])
-            vol_cls   = "positive" if r['VolRatio'] >= 2 else "warning" if r['VolRatio'] >= 1.5 else "neutral"
-            atr_str   = f"{r['ATR_pct']:.1f}%" if r['ATR_pct'] else "N/D"
-            var_s_cls = "positive" if r['VarSemana'] >= 0 else "negative"
-            vwap_str  = f"${r['VWAP']:.3f}" if r['VWAP'] else "N/D"
-
+            acc_color  = r['ColorTendencia']
+            gap_sign   = "+" if r['GAP'] >= 0 else ""
+            atr_str    = f"{r['ATR_pct']:.1f}%" if r['ATR_pct'] else "N/D"
+            vwap_str   = f"${r['VWAP']:.3f}" if r['VWAP'] else "N/D"
             score_pct, score_color = bar_score(r['Score'])
-            pm_badge  = premarket_badge(r['PremarketPct'])
+            pm_txt     = f"  PM {r['PremarketPct']:+.2f}%" if r['PremarketPct'] else ""
+            tipo_txt   = str(r['Tipo']).upper()
 
-            # Señales como tags HTML
-            tags_html = ""
-            for s in r['SenalesCompra'][:3]:
-                tags_html += f'<span class="signal-tag tag-buy">{s}</span>'
-            for s in r['SenalesVenta'][:2]:
-                tags_html += f'<span class="signal-tag tag-sell">{s}</span>'
-
-            # Posición del precio en el rango del día
-            pos_dia = rango_dia_pct(r['Precio'], r['MinDia'], r['MaxDia'])
-
-            st.markdown(f"""
-            <div class="ticker-card" style="--accent:{acc_color}">
-
-                <div class="card-header">
-                    <div>
-                        <span class="ticker-symbol">{r['Ticker']}</span>
-                        {badge_tipo(r['Tipo'])}
-                        {pm_badge}
+            # ── Borde superior de color con CSS inline ──────────────────
+            st.markdown(
+                f'''<div style="border-top:3px solid {acc_color};
+                    border-radius:10px 10px 0 0;
+                    background:#161b22;
+                    padding:12px 14px 6px 14px;
+                    border-left:1px solid #30363d;
+                    border-right:1px solid #30363d;
+                    margin-bottom:0">
+                    <span style="font-family:Space Mono,monospace;font-size:1.1rem;
+                        font-weight:700;color:#58a6ff;letter-spacing:1px">
+                        {r['Ticker']}
+                    </span>
+                    <span style="font-size:0.65rem;font-weight:700;
+                        padding:2px 7px;border-radius:20px;margin-left:6px;
+                        background:rgba(33,150,243,0.15);color:#58a6ff;
+                        border:1px solid rgba(33,150,243,0.3)">
+                        {tipo_txt}
+                    </span>
+                    {f'<span style="font-size:0.65rem;font-weight:700;padding:2px 7px;border-radius:4px;margin-left:4px;background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid rgba(63,185,80,0.3)">{pm_txt}</span>' if pm_txt else ''}
+                    <div style="float:right;text-align:right;font-size:0.65rem;color:{acc_color};font-weight:700;margin-top:2px">
+                        {r['Tendencia']} · EMA9 {r['EMA9']} / EMA21 {r['EMA21']}
                     </div>
-                    <div style="text-align:right">
-                        <div style="font-family:'Space Mono',monospace; font-size:0.68rem; color:#484f58">
-                            {r['Tendencia']}
-                        </div>
-                        <div style="font-size:0.68rem; color:{acc_color}; font-weight:700">
-                            EMA9 {r['EMA9']} · EMA21 {r['EMA21']}
-                        </div>
-                    </div>
-                </div>
+                </div>''',
+                unsafe_allow_html=True
+            )
 
-                <div class="price-row">
-                    <span class="ticker-price">${r['Precio']}</span>
-                    <span class="{gap_cls}">{r['GAP']:+.2f}%</span>
-                </div>
+            # ── Precio + GAP ─────────────────────────────────────────────
+            gap_color  = "#3fb950" if r['GAP'] >= 0 else "#f85149"
+            var5_color = "#3fb950" if r['VarSemana'] >= 0 else "#f85149"
+            st.markdown(
+                f'''<div style="background:#161b22;padding:6px 14px 10px 14px;
+                    border-left:1px solid #30363d;border-right:1px solid #30363d">
+                    <span style="font-family:Space Mono,monospace;font-size:1.5rem;
+                        font-weight:700;color:#e6edf3">${r['Precio']}</span>
+                    <span style="font-size:1rem;font-weight:700;margin-left:8px;
+                        color:{gap_color}">{gap_sign}{r['GAP']}%</span>
+                    <span style="font-size:0.75rem;color:{var5_color};margin-left:8px">
+                        5d: {r['VarSemana']:+.1f}%</span>
+                </div>''',
+                unsafe_allow_html=True
+            )
 
-                <div class="metrics-grid">
-                    <div class="metric-box">
-                        <div class="metric-label">RSI</div>
-                        <div class="metric-value {rsi_cls}">{rsi_label(r['RSI'])}</div>
-                    </div>
-                    <div class="metric-box">
-                        <div class="metric-label">Volumen</div>
-                        <div class="metric-value {vol_cls}">{r['VolRatio']}x</div>
-                    </div>
-                    <div class="metric-box">
-                        <div class="metric-label">ATR%</div>
-                        <div class="metric-value warning">{atr_str}</div>
-                    </div>
-                    <div class="metric-box">
-                        <div class="metric-label">Var. 5d</div>
-                        <div class="metric-value {var_s_cls}">{r['VarSemana']:+.1f}%</div>
-                    </div>
-                    <div class="metric-box">
-                        <div class="metric-label">VWAP</div>
-                        <div class="metric-value neutral">{vwap_str}</div>
-                    </div>
-                    <div class="metric-box">
-                        <div class="metric-label">Señales</div>
-                        <div class="metric-value" style="color:{score_color}">
-                            ⚡ {r['TotalSenales']}
-                        </div>
-                    </div>
-                </div>
+            # ── Grilla de métricas con st.columns nativas ────────────────
+            st.markdown(
+                '<div style="background:#161b22;padding:4px 14px 8px 14px;' +
+                'border-left:1px solid #30363d;border-right:1px solid #30363d">',
+                unsafe_allow_html=True
+            )
+            m1, m2, m3 = st.columns(3)
+            rsi_color = {"positive":"#3fb950","negative":"#f85149",
+                         "warning":"#d29922","neutral":"#8b949e"}[color_rsi(r['RSI'])]
+            vol_color = "#3fb950" if r['VolRatio'] >= 2 else "#d29922" if r['VolRatio'] >= 1.5 else "#8b949e"
+            with m1:
+                st.markdown(f'''<div style="text-align:center;padding:4px 0">
+                    <div style="font-size:0.58rem;color:#8b949e;text-transform:uppercase;
+                        letter-spacing:.5px">RSI</div>
+                    <div style="font-family:Space Mono,monospace;font-size:0.82rem;
+                        font-weight:700;color:{rsi_color}">{rsi_label(r['RSI'])}</div>
+                </div>''', unsafe_allow_html=True)
+            with m2:
+                st.markdown(f'''<div style="text-align:center;padding:4px 0">
+                    <div style="font-size:0.58rem;color:#8b949e;text-transform:uppercase;
+                        letter-spacing:.5px">Volumen</div>
+                    <div style="font-family:Space Mono,monospace;font-size:0.82rem;
+                        font-weight:700;color:{vol_color}">{r['VolRatio']}x</div>
+                </div>''', unsafe_allow_html=True)
+            with m3:
+                st.markdown(f'''<div style="text-align:center;padding:4px 0">
+                    <div style="font-size:0.58rem;color:#8b949e;text-transform:uppercase;
+                        letter-spacing:.5px">ATR%</div>
+                    <div style="font-family:Space Mono,monospace;font-size:0.82rem;
+                        font-weight:700;color:#d29922">{atr_str}</div>
+                </div>''', unsafe_allow_html=True)
 
-                <div class="signals-row">
-                    <div class="signal-bar-bg">
-                        <div class="signal-bar-fill"
-                             style="width:{score_pct}%; --bar-color:{score_color}">
-                        </div>
+            m4, m5, m6 = st.columns(3)
+            with m4:
+                st.markdown(f'''<div style="text-align:center;padding:4px 0">
+                    <div style="font-size:0.58rem;color:#8b949e;text-transform:uppercase;
+                        letter-spacing:.5px">VWAP</div>
+                    <div style="font-family:Space Mono,monospace;font-size:0.82rem;
+                        font-weight:700;color:#8b949e">{vwap_str}</div>
+                </div>''', unsafe_allow_html=True)
+            with m5:
+                st.markdown(f'''<div style="text-align:center;padding:4px 0">
+                    <div style="font-size:0.58rem;color:#8b949e;text-transform:uppercase;
+                        letter-spacing:.5px">Score</div>
+                    <div style="font-family:Space Mono,monospace;font-size:0.82rem;
+                        font-weight:700;color:{score_color}">{r['Score']:+d}</div>
+                </div>''', unsafe_allow_html=True)
+            with m6:
+                st.markdown(f'''<div style="text-align:center;padding:4px 0">
+                    <div style="font-size:0.58rem;color:#8b949e;text-transform:uppercase;
+                        letter-spacing:.5px">Señales</div>
+                    <div style="font-family:Space Mono,monospace;font-size:0.82rem;
+                        font-weight:700;color:{score_color}">⚡ {r['TotalSenales']}</div>
+                </div>''', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # ── Barra de score (st.progress nativo) ─────────────────────
+            st.progress(max(1, score_pct) / 100,
+                        text=f"Score {r['Score']:+d}  |  {r['TotalSenales']} señales activas")
+
+            # ── Tags de señales ──────────────────────────────────────────
+            all_tags = (
+                [f"🟢 {s}" for s in r['SenalesCompra'][:3]] +
+                [f"🔴 {s}" for s in r['SenalesVenta'][:2]]
+            )
+            if all_tags:
+                st.caption("  ·  ".join(all_tags))
+
+            # ── Rango del día ────────────────────────────────────────────
+            pos_dia  = rango_dia_pct(r['Precio'], r['MinDia'], r['MaxDia'])
+            rango_pct_norm = pos_dia / 100.0
+            st.markdown(
+                f'''<div style="background:#161b22;padding:4px 14px 10px 14px;
+                    border-left:1px solid #30363d;border-right:1px solid #30363d;
+                    border-bottom:1px solid #30363d;border-radius:0 0 10px 10px;
+                    margin-bottom:2px">
+                    <div style="font-size:0.60rem;color:#8b949e;margin-bottom:4px">
+                        Rango día: <b style="color:#e6edf3">${r['MinDia']}</b>
+                        &nbsp;—&nbsp;
+                        <b style="color:#e6edf3">${r['MaxDia']}</b>
+                        &nbsp;·&nbsp; precio en <b style="color:{acc_color}">{pos_dia:.0f}%</b> del rango
                     </div>
-                    <span class="signal-score-text">Score {r['Score']:+d}</span>
-                </div>
-
-                <div class="signal-tags">{tags_html}</div>
-
-                <div class="range-row" style="margin-top:8px">
-                    <span class="range-label">${r['MinDia']}</span>
-                    <div class="range-bar-bg">
-                        <div class="range-bar-fill"
-                             style="--range-left:0%; --range-width:100%">
-                        </div>
-                        <div class="range-dot"
-                             style="--dot-pos:{pos_dia}%">
-                        </div>
+                    <div style="height:5px;background:#21262d;border-radius:3px;position:relative">
+                        <div style="position:absolute;height:100%;width:100%;
+                            background:linear-gradient(90deg,#f85149,#d29922,#3fb950);
+                            border-radius:3px;opacity:0.6"></div>
+                        <div style="position:absolute;width:10px;height:10px;
+                            background:#fff;border-radius:50%;top:-2.5px;
+                            left:calc({pos_dia:.1f}% - 5px);
+                            box-shadow:0 0 5px rgba(255,255,255,.6)"></div>
                     </div>
-                    <span class="range-label">${r['MaxDia']}</span>
-                </div>
+                </div>''',
+                unsafe_allow_html=True
+            )
 
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Gráfico enriquecido
+            # ── Gráfico Altair (funciona bien fuera del HTML custom) ─────
             chart = build_chart(r['Data'], r['Tendencia'])
             st.altair_chart(chart, use_container_width=True)
 
-            # Leyenda del gráfico
-            st.markdown(f"""
-            <div style="display:flex; gap:12px; padding:2px 4px 8px 4px; font-size:0.62rem; color:#8b949e">
-                <span style="color:{r['ColorTendencia']}">━ Precio</span>
-                <span style="color:#f0c040">╌ EMA9</span>
-                <span style="color:#c084fc">╌ EMA21</span>
-                <span style="color:#8b949e; opacity:0.7">▊ Volumen</span>
-            </div>
-            """, unsafe_allow_html=True)
+            # ── Leyenda del gráfico ──────────────────────────────────────
+            leg_color = r['ColorTendencia']
+            st.markdown(
+                f'<div style="display:flex;gap:12px;padding:0 4px 10px;'
+                f'font-size:0.60rem;color:#8b949e">'
+                f'<span style="color:{leg_color}">━ Precio</span>'
+                f'<span style="color:#f0c040">╌ EMA9</span>'
+                f'<span style="color:#c084fc">╌ EMA21</span>'
+                f'<span>▊ Vol</span></div>',
+                unsafe_allow_html=True
+            )
 
 else:
     st.markdown("""
