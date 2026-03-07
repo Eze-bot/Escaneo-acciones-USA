@@ -101,7 +101,7 @@ if os.path.exists(RUTA_CSV):
 
     c1, c2 = st.columns([1, 4])
     with c1:
-        if st.button("🚀 INICIAR ESCANEO PRO"):
+        if st.button("🚀 ESCANEO"):
             with st.spinner("Analizando indicadores..."):
                 with ThreadPoolExecutor(max_workers=10) as executor:
                     res = [r for r in list(executor.map(analizar_pro, tickers)) if r is not None]
