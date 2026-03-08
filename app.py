@@ -8,110 +8,82 @@ import datetime
 import pytz
 import os
 import altair as alt
-import time
 
 # ─────────────────────────────────────────────────────────────
-# 1. CONFIGURACIÓN Y ESTILOS (DARK MODE + CONTRASTE)
+# 1. CONFIGURACIÓN Y ESTILOS (DARK MODE PROFESIONAL)
 # ─────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Scanner Quantum 2.0", layout="wide")
+st.set_page_config(page_title="Quantum Scanner 3.0", layout="wide")
 
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
-    
     .stApp { background: #0d1117; color: #e6edf3; }
     
-    /* Título principal con mayor impacto */
-    h1 {
-        color: #ffffff !important;
-        font-family: 'Space Mono', monospace;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-    }
-
-    /* ESTILO DE BOTONES DE ALTO CONTRASTE */
-    div.stButton > button {
-        width: 100%;
-        border-radius: 8px;
-        height: 3em;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        transition: all 0.3s ease;
-    }
-
-    /* Botón ESCANEO (Azul Vibrante) */
-    div.stButton > button:first-child {
-        background-color: #007bff;
-        color: white;
-        border: none;
-        box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
+    /* Botones de Alto Contraste */
+    div.stButton > button { width: 100%; border-radius: 8px; font-weight: 700; text-transform: uppercase; }
+    
+    /* Botón ESCANEO (Azul) */
+    div.stButton > button[kind="primary"] {
+        background-color: #007bff !important; color: white !important;
+        border: none; box-shadow: 0 4px 12px rgba(0, 123, 255, 0.4);
     }
     
-    div.stButton > button:hover {
-        background-color: #0056b3;
-        box-shadow: 0 6px 20px rgba(0, 123, 255, 0.5);
-        transform: translateY(-2px);
-    }
-
-    /* Botón WHATSAPP (Verde Neón) */
-    /* Identificamos el segundo botón por su posición en la UI cuando aparece */
+    /* Botón WHATSAPP (Verde) */
     div.stButton > button[kind="secondary"] {
-        background-color: #28a745 !important;
-        color: white !important;
-        border: none !important;
-        box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3) !important;
+        background-color: #238636 !important; color: white !important;
+        border: none !important; box-shadow: 0 4px 12px rgba(35, 134, 54, 0.4);
     }
 
-    /* TARJETAS */
     .ticker-card {
-        background: #161b22;
+        background: linear-gradient(145deg, #161b22 0%, #0d1117 100%);
         border: 1px solid #30363d;
         border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 15px;
-        transition: transform 0.2s;
+        padding: 18px;
+        margin-bottom: 10px;
     }
-    .ticker-card:hover { border-color: #58a6ff; transform: translateY(-2px); }
-    .t-symbol { font-family: 'Space Mono', monospace; font-size: 1.5rem; font-weight: 700; color: #58a6ff; }
-    .t-price { font-size: 1.8rem; font-weight: 700; color: #ffffff; }
-    .t-gap { font-size: 1.1rem; font-weight: 600; }
-    .t-metrics { font-size: 0.85rem; color: #8b949e; margin-top: 8px; font-family: 'Space Mono', monospace; }
+    .t-symbol { font-family: 'Space Mono', monospace; font-size: 1.3rem; color: #58a6ff; font-weight:700; }
+    .t-price { font-size: 1.7rem; font-weight: 700; color: #ffffff; }
+    .t-market { font-size: 0.7rem; background: #21262d; padding: 2px 6px; border-radius: 4px; color: #8b949e; }
 </style>
 """, unsafe_allow_html=True)
 
 RUTA_CSV = "ACTIVOS_BULLMARKET_USA.csv"
 
 # ─────────────────────────────────────────────────────────────
-# 2. MOTOR DE ANÁLISIS TÉCNICO
+# 2. MOTOR TÉCNICO MULTI-MERCADO
 # ─────────────────────────────────────────────────────────────
-def analizar_pro(symbol):
+def analizar_activo(symbol):
     try:
-        symbol = str(symbol).split('.')[0].strip().upper()
+        symbol = str(symbol).strip().upper()
         tk = yf.Ticker(symbol)
+        # 60 días para EMAs
         df = tk.history(period="60d", interval="1d")
-        if len(df) < 25: return None
+        
+        if len(df) < 20: return None
 
+        # Indicadores Técnicos
         df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
         df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
         
+        # RSI
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['RSI'] = 100 - (100 / (1 + rs))
+        df['RSI'] = 100 - (100 / (1 + (gain / loss)))
 
         precio = df['Close'].iloc[-1]
         ayer = df['Close'].iloc[-2]
         gap = ((precio - ayer) / ayer) * 100
-        rsi_val = df['RSI'].iloc[-1]
         
-        bullish = precio > df['EMA9'].iloc[-1] > df['EMA21'].iloc[-1]
-        
+        # Detección de Mercado y Moneda
+        es_cedear = ".BA" in symbol
+        moneda = "$" if es_cedear else "USD"
+        mercado = "BYMA (Arg)" if es_cedear else "NYSE/NASDAQ (USA)"
+
         return {
             "Ticker": symbol, "Precio": round(precio, 2), "GAP": round(gap, 2),
-            "RSI": round(rsi_val, 1), "EMA9": round(df['EMA9'].iloc[-1], 2),
-            "Tendencia": "Alcista" if bullish else "Neutral/Bajista",
-            "Color": "#3fb950" if gap > 0 else "#f85149",
+            "Moneda": moneda, "Mercado": mercado, "RSI": round(df['RSI'].iloc[-1], 1),
+            "EMA9": round(df['EMA9'].iloc[-1], 2),
             "Data": df.tail(30).reset_index()
         }
     except: return None
@@ -119,73 +91,103 @@ def analizar_pro(symbol):
 # ─────────────────────────────────────────────────────────────
 # 3. INTERFAZ Y SIDEBAR
 # ─────────────────────────────────────────────────────────────
-st.title("📡 Analisis activos / Oportunidades")
+st.title("📡 Quantum 3.0 | USA & CEDEARs")
 
 with st.sidebar:
-    st.header("🛠️ Filtros Técnicos")
-    p_min = st.number_input("Precio Mín ($)", 0.1, 5000.0, 1.0)
-    p_max = st.number_input("Precio Máx ($)", 0.1, 5000.0, 100.0)
-    gap_min = st.slider("GAP Mínimo %", -10.0, 20.0, 1.5)
-    st.divider()
-    st.subheader("📱 WhatsApp Config")
-    id_ins = st.text_input("ID Instancia", "7103533853")
-    token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
-    celular = st.text_input("Número destino", "5492664300161")
-
-if os.path.exists(RUTA_CSV):
-    tickers = pd.read_csv(RUTA_CSV)['Ticker'].dropna().unique().tolist()
+    st.header("🔍 Modo de Análisis")
     
-    if 'resultados_v2' not in st.session_state:
-        st.session_state.resultados_v2 = []
-
-    c1, c2 = st.columns([1, 4])
-    with c1:
-        # El botón de escaneo usa el estilo primario (Azul)
-        if st.button("🚀 ESCANEO", type="primary"):
-            with st.spinner("Analizando indicadores..."):
-                with ThreadPoolExecutor(max_workers=10) as executor:
-                    res = [r for r in list(executor.map(analizar_pro, tickers)) if r is not None]
-                    res = [r for r in res if p_min <= r['Precio'] <= p_max and r['GAP'] >= gap_min]
-                    st.session_state.resultados_v2 = sorted(res, key=lambda x: x['GAP'], reverse=True)[:6]
-
-    if st.session_state.resultados_v2:
-        with c2:
-            # El botón de WhatsApp usa un estilo secundario que hemos pintado de VERDE en el CSS
-            if st.button("📱 ENVIAR SEÑALES A WHATSAPP", type="secondary"):
-                try:
-                    msg = f"🚀 *SCANN QUANTUM 2.0*\n"
-                    for r in st.session_state.resultados_v2:
-                        msg += f"🔹 *{r['Ticker']}*: ${r['Precio']} ({r['GAP']}%)\n   RSI: {r['RSI']} | {r['Tendencia']}\n"
-                    greenAPI = API.GreenApi(id_ins, token_ins)
-                    greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
-                    st.toast("Reporte enviado con éxito")
-                except: st.error("Error en WhatsApp")
-
-        # RENDERIZADO DE TARJETAS
-        st.divider()
-        cols = st.columns(3)
-        for i, res in enumerate(st.session_state.resultados_v2):
-            with cols[i % 3]:
-                st.markdown(f"""
-                <div class="ticker-card">
-                    <div class="t-symbol">{res['Ticker']}</div>
-                    <div class="t-price">${res['Precio']}</div>
-                    <div class="t-gap" style="color:{res['Color']}">{"+" if res['GAP']>0 else ""}{res['GAP']}%</div>
-                    <div class="t-metrics">
-                        RSI: {res['RSI']} | {res['Tendencia']}<br>
-                        EMA9: ${res['EMA9']}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                base = alt.Chart(res['Data']).encode(x=alt.X('Date:T', axis=None))
-                linea_precio = base.mark_line(color='#58a6ff', strokeWidth=2).encode(y=alt.Y('Close:Q', scale=alt.Scale(zero=False)))
-                linea_ema9 = base.mark_line(color='#f0c040', strokeDash=[4,2]).encode(y='EMA9:Q')
-                
-                chart = alt.layer(linea_precio, linea_ema9).properties(height=100)
-                st.altair_chart(chart, use_container_width=True)
-                st.markdown("<p style='font-size:0.7rem; color:#8b949e; margin-top:-15px'>━ Precio | ╌ EMA9</p>", unsafe_allow_html=True)
+    # Cargar lista del CSV para el buscador
+    if os.path.exists(RUTA_CSV):
+        df_csv = pd.read_csv(RUTA_CSV)
+        col_name = [c for c in df_csv.columns if 'tick' in c.lower()][0]
+        lista_completa = df_csv[col_name].dropna().unique().tolist()
     else:
-        st.info("Sistema listo. Pulsa 'Escaneo' para procesar indicadores técnicos.")
+        lista_completa = ["AAPL", "TSLA", "GGAL.BA", "AAPL.BA"]
+
+    # Buscador de activos específicos
+    activos_manuales = st.multiselect("🎯 Elegir activos específicos:", lista_completa, help="Si eliges activos aquí, se ignorarán los filtros de GAP y Precio.")
+    
+    st.divider()
+    st.header("⚙️ Filtros de Escaneo")
+    st.caption("Solo aplican si no eliges activos específicos arriba.")
+    p_min = st.number_input("Precio Mín ($/USD)", 0.0, 1000000.0, 1.0)
+    p_max = st.number_input("Precio Máx ($/USD)", 0.0, 1000000.0, 500000.0)
+    gap_min = st.slider("GAP Mínimo (%)", -10.0, 20.0, 0.5)
+    
+    st.divider()
+    st.subheader("📱 WhatsApp")
+    celular = st.text_input("Número", "5492664300161")
+    id_ins = st.text_input("ID Instancia", "7103533853")
+    token_ins = st.text_input("Token", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
+
+# ─────────────────────────────────────────────────────────────
+# 4. EJECUCIÓN LÓGICA
+# ─────────────────────────────────────────────────────────────
+if 'resultados_v3' not in st.session_state:
+    st.session_state.resultados_v3 = []
+
+c1, c2 = st.columns([1, 4])
+
+with c1:
+    # Cambia el nombre del botón según el modo
+    txt_boton = "🎯 ANALIZAR SELECCIÓN" if activos_manuales else "🚀 INICIAR ESCANEO"
+    if st.button(txt_boton, type="primary"):
+        # Elegir qué lista procesar
+        target = activos_manuales if activos_manuales else lista_completa
+        
+        with st.spinner("Procesando señales técnicas..."):
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                res = [r for r in list(executor.map(analizar_activo, target)) if r is not None]
+                
+                # Filtrar solo si es escaneo general
+                if not activos_manuales:
+                    res = [r for r in res if p_min <= r['Precio'] <= p_max and r['GAP'] >= gap_min]
+                
+                st.session_state.resultados_v3 = sorted(res, key=lambda x: x['GAP'], reverse=True)[:9]
+
+if st.session_state.resultados_v3:
+    with c2:
+        if st.button("📱 ENVIAR REPORTE SELECCIONADO", type="secondary"):
+            try:
+                msg = f"🚀 *REPORTE QUANTUM 3.0*\n"
+                for r in st.session_state.resultados_v2:
+                    msg += f"🔹 *{r['Ticker']}*: {r['Moneda']}{r['Precio']} ({r['GAP']}%)\n   RSI: {r['RSI']} | {r['Mercado']}\n"
+                greenAPI = API.GreenApi(id_ins, token_ins)
+                greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
+                st.toast("Enviado correctamente", icon="✅")
+            except: st.error("Error WhatsApp")
+
+    # GRID DE RESULTADOS
+    st.divider()
+    cols = st.columns(3)
+    for i, res in enumerate(st.session_state.resultados_v3):
+        with cols[i % 3]:
+            color_gap = "#3fb950" if res['GAP'] > 0 else "#f85149"
+            st.markdown(f"""
+            <div class="ticker-card">
+                <div style="display:flex; justify-content:space-between;">
+                    <span class="t-symbol">{res['Ticker']}</span>
+                    <span class="t-market">{res['Mercado']}</span>
+                </div>
+                <div class="t-price">{res['Moneda']} {res['Precio']}</div>
+                <div style="color:{color_gap}; font-weight:700; font-size:1.1rem;">
+                    {"+" if res['GAP']>0 else ""}{res['GAP']}%
+                </div>
+                <div style="font-size:0.8rem; color:#8b949e; margin-top:8px; font-family:monospace;">
+                    RSI: {res['RSI']} | EMA9: {res['Moneda']}{res['EMA9']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Gráfico de tendencia
+            chart = alt.Chart(res['Data']).mark_area(
+                line={'color': '#58a6ff'},
+                color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='#58a6ff', offset=0), alt.GradientStop(color='#0d1117', offset=1)], x1=1, y1=1, x2=1, y2=0),
+                opacity=0.3
+            ).encode(
+                x=alt.X('Date:T', axis=None),
+                y=alt.Y('Close:Q', scale=alt.Scale(zero=False), axis=None)
+            ).properties(height=80)
+            st.altair_chart(chart, use_container_width=True)
 else:
-    st.error("CSV no encontrado.")
+    st.info("💡 Consejo: Selecciona activos específicos en la barra lateral para un monitoreo directo, o dale a 'Escaneo' para descubrir oportunidades.")
