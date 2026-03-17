@@ -1,191 +1,100 @@
-import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
-from whatsapp_api_client_python import API
-from concurrent.futures import ThreadPoolExecutor
-import datetime
-import pytz
-import os
-import altair as alt
-import time
 
-# ─────────────────────────────────────────────────────────────
-# 1. CONFIGURACIÓN Y ESTILOS (DARK MODE + CONTRASTE)
-# ─────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Scanner Quantum 2.0", layout="wide")
+# Listado Ampliado: "ACTIVOS BULLMARKET USA" (Top 30 Market Caps & Growth)
+ACTIVOS_USA = [
+    "AAPL", "NVDA", "TSLA", "MSFT", "AMD", "AMZN", "GOOGL", "META", # Big Tech
+    "AVGO", "ORCL", "NFLX", "CRM", "ADBE", "INTC", "MU",           # Software/Semis
+    "UNH", "LLY", "JPM", "V", "MA", "WMT", "COST", "PG",          # Finanzas/Consumo/Salud
+    "XOM", "CVX", "TSM", "ASML", "BRK-B", "BA", "DIS"              # Energía/Industria/Global
+]
 
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
-    
-    .stApp { background: #0d1117; color: #e6edf3; }
-    
-    /* Título principal con mayor impacto */
-    h1 {
-        color: #ffffff !important;
-        font-family: 'Space Mono', monospace;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-    }
-
-    /* ESTILO DE BOTONES DE ALTO CONTRASTE */
-    div.stButton > button {
-        width: 100%;
-        border-radius: 8px;
-        height: 3em;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        transition: all 0.3s ease;
-    }
-
-    /* Botón ESCANEO (Azul Vibrante) */
-    div.stButton > button:first-child {
-        background-color: #007bff;
-        color: white;
-        border: none;
-        box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
-    }
-    
-    div.stButton > button:hover {
-        background-color: #0056b3;
-        box-shadow: 0 6px 20px rgba(0, 123, 255, 0.5);
-        transform: translateY(-2px);
-    }
-
-    /* Botón WHATSAPP (Verde Neón) */
-    /* Identificamos el segundo botón por su posición en la UI cuando aparece */
-    div.stButton > button[kind="secondary"] {
-        background-color: #28a745 !important;
-        color: white !important;
-        border: none !important;
-        box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3) !important;
-    }
-
-    /* TARJETAS */
-    .ticker-card {
-        background: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 15px;
-        transition: transform 0.2s;
-    }
-    .ticker-card:hover { border-color: #58a6ff; transform: translateY(-2px); }
-    .t-symbol { font-family: 'Space Mono', monospace; font-size: 1.5rem; font-weight: 700; color: #58a6ff; }
-    .t-price { font-size: 1.8rem; font-weight: 700; color: #ffffff; }
-    .t-gap { font-size: 1.1rem; font-weight: 600; }
-    .t-metrics { font-size: 0.85rem; color: #8b949e; margin-top: 8px; font-family: 'Space Mono', monospace; }
-</style>
-""", unsafe_allow_html=True)
-
-RUTA_CSV = "ACTIVOS_BULLMARKET_USA.csv"
-
-# ─────────────────────────────────────────────────────────────
-# 2. MOTOR DE ANÁLISIS TÉCNICO
-# ─────────────────────────────────────────────────────────────
-def analizar_pro(symbol):
+def get_real_sentiment(ticker):
     try:
-        symbol = str(symbol).split('.')[0].strip().upper()
-        tk = yf.Ticker(symbol)
-        df = tk.history(period="60d", interval="1d")
-        if len(df) < 25: return None
+        t = yf.Ticker(ticker)
+        news = t.news
+        if not news: return 0
+        pos = ['growth', 'buy', 'upgrade', 'beat', 'ai', 'dividend', 'success', 'partnership', 'bullish']
+        neg = ['drop', 'sell', 'downgrade', 'miss', 'risk', 'lawsuit', 'loss', 'bearish']
+        score = 0
+        for n in news[:5]: # Reducido a 5 para velocidad en listas largas
+            text = n['title'].lower()
+            score += sum(1 for w in pos if w in text)
+            score -= sum(1 for w in neg if w in text)
+        return score
+    except: return 0
 
-        df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
-        df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
+def scan_bullmarket_extended():
+    results = []
+    total = len(ACTIVOS_USA)
+    print(f"--- Iniciando Escaneo de {total} Activos USA ---")
+
+    for i, ticker in enumerate(ACTIVOS_USA):
+        # Feedback visual del progreso
+        if (i+1) % 5 == 0: print(f"Procesando: {i+1}/{total}...")
         
-        delta = df['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['RSI'] = 100 - (100 / (1 + rs))
+        try:
+            data = yf.download(ticker, period="1y", interval="1d", progress=False)
+            if data.empty or len(data) < 200: continue
 
-        precio = df['Close'].iloc[-1]
-        ayer = df['Close'].iloc[-2]
-        gap = ((precio - ayer) / ayer) * 100
-        rsi_val = df['RSI'].iloc[-1]
-        
-        bullish = precio > df['EMA9'].iloc[-1] > df['EMA21'].iloc[-1]
-        
-        return {
-            "Ticker": symbol, "Precio": round(precio, 2), "GAP": round(gap, 2),
-            "RSI": round(rsi_val, 1), "EMA9": round(df['EMA9'].iloc[-1], 2),
-            "Tendencia": "Alcista" if bullish else "Neutral/Bajista",
-            "Color": "#3fb950" if gap > 0 else "#f85149",
-            "Data": df.tail(30).reset_index()
-        }
-    except: return None
+            # --- INDICADORES ---
+            data['EMA20'] = data['Close'].ewm(span=20, adjust=False).mean()
+            data['EMA50'] = data['Close'].ewm(span=50, adjust=False).mean()
+            data['SMA200'] = data['Close'].rolling(window=200).mean()
+            
+            # RSI
+            delta = data['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            data['RSI'] = 100 - (100 / (1 + (gain / loss)))
 
-# ─────────────────────────────────────────────────────────────
-# 3. INTERFAZ Y SIDEBAR
-# ─────────────────────────────────────────────────────────────
-st.title("📡 Analisis activos / Oportunidades")
+            # ATR (Volatilidad)
+            high_low = data['High'] - data['Low']
+            high_close = abs(data['High'] - data['Close'].shift())
+            low_close = abs(data['Low'] - data['Close'].shift())
+            ranges = pd.concat([high_low, high_close, low_close], axis=1)
+            data['ATR'] = ranges.max(axis=1).rolling(14).mean()
 
-with st.sidebar:
-    st.header("🛠️ Filtros Técnicos")
-    p_min = st.number_input("Precio Mín ($)", 0.1, 5000.0, 1.0)
-    p_max = st.number_input("Precio Máx ($)", 0.1, 5000.0, 100.0)
-    gap_min = st.slider("GAP Mínimo %", -10.0, 20.0, 1.5)
-    st.divider()
-    st.subheader("📱 WhatsApp Config")
-    id_ins = st.text_input("ID Instancia", "7103533853")
-    token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
-    celular = st.text_input("Número destino", "5492664300161")
+            last = data.iloc[-1]
+            precio_act = last['Close']
+            sentimiento = get_real_sentiment(ticker)
+            
+            # --- SCORE DE CONFIANZA ---
+            score = 0
+            if precio_act > last['SMA200']: score += 30      # Tendencia Largo Plazo
+            if last['EMA20'] > last['EMA50']: score += 25     # Tendencia Corto Plazo
+            if 40 < last['RSI'] < 65: score += 25             # Fuerza sin agotamiento
+            if sentimiento > 0: score += 20                   # Noticias positivas
+            
+            # --- GESTIÓN DE RIESGO ---
+            distancia_sl = 2.5 * last['ATR'] # SL un poco más holgado para el listado amplio
+            stop_loss = precio_act - distancia_sl
+            take_profit = precio_act + (distancia_sl * 2.2) # Ratio 1:2.2 mejorado
+            
+            plazo = "7-14 días" if score > 75 else "2-5 días"
 
-if os.path.exists(RUTA_CSV):
-    tickers = pd.read_csv(RUTA_CSV)['Ticker'].dropna().unique().tolist()
+            results.append({
+                "Ticker": ticker,
+                "Precio": f"${precio_act:.2f}",
+                "Confianza": score,
+                "SL": f"${stop_loss:.2f}",
+                "TP": f"${take_profit:.2f}",
+                "Plazo": plazo,
+                "News": "POS" if sentimiento > 0 else ("NEG" if sentimiento < 0 else "NEU")
+            })
+        except Exception:
+            continue
+
+    # Filtrar solo los que tienen confianza mínima para no mostrar "ruido"
+    df = pd.DataFrame(results)
+    df = df[df['Confianza'] >= 50].sort_values(by="Confianza", ascending=False)
     
-    if 'resultados_v2' not in st.session_state:
-        st.session_state.resultados_v2 = []
+    return df
 
-    c1, c2 = st.columns([1, 4])
-    with c1:
-        # El botón de escaneo usa el estilo primario (Azul)
-        if st.button("🚀 ESCANEO", type="primary"):
-            with st.spinner("Analizando indicadores..."):
-                with ThreadPoolExecutor(max_workers=10) as executor:
-                    res = [r for r in list(executor.map(analizar_pro, tickers)) if r is not None]
-                    res = [r for r in res if p_min <= r['Precio'] <= p_max and r['GAP'] >= gap_min]
-                    st.session_state.resultados_v2 = sorted(res, key=lambda x: x['GAP'], reverse=True)[:6]
-
-    if st.session_state.resultados_v2:
-        with c2:
-            # El botón de WhatsApp usa un estilo secundario que hemos pintado de VERDE en el CSS
-            if st.button("📱 ENVIAR SEÑALES A WHATSAPP", type="secondary"):
-                try:
-                    msg = f"🚀 *SCANN QUANTUM 2.0*\n"
-                    for r in st.session_state.resultados_v2:
-                        msg += f"🔹 *{r['Ticker']}*: ${r['Precio']} ({r['GAP']}%)\n   RSI: {r['RSI']} | {r['Tendencia']}\n"
-                    greenAPI = API.GreenApi(id_ins, token_ins)
-                    greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
-                    st.toast("Reporte enviado con éxito")
-                except: st.error("Error en WhatsApp")
-
-        # RENDERIZADO DE TARJETAS
-        st.divider()
-        cols = st.columns(3)
-        for i, res in enumerate(st.session_state.resultados_v2):
-            with cols[i % 3]:
-                st.markdown(f"""
-                <div class="ticker-card">
-                    <div class="t-symbol">{res['Ticker']}</div>
-                    <div class="t-price">${res['Precio']}</div>
-                    <div class="t-gap" style="color:{res['Color']}">{"+" if res['GAP']>0 else ""}{res['GAP']}%</div>
-                    <div class="t-metrics">
-                        RSI: {res['RSI']} | {res['Tendencia']}<br>
-                        EMA9: ${res['EMA9']}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                base = alt.Chart(res['Data']).encode(x=alt.X('Date:T', axis=None))
-                linea_precio = base.mark_line(color='#58a6ff', strokeWidth=2).encode(y=alt.Y('Close:Q', scale=alt.Scale(zero=False)))
-                linea_ema9 = base.mark_line(color='#f0c040', strokeDash=[4,2]).encode(y='EMA9:Q')
-                
-                chart = alt.layer(linea_precio, linea_ema9).properties(height=100)
-                st.altair_chart(chart, use_container_width=True)
-                st.markdown("<p style='font-size:0.7rem; color:#8b949e; margin-top:-15px'>━ Precio | ╌ EMA9</p>", unsafe_allow_html=True)
-    else:
-        st.info("Sistema listo. Pulsa 'Escaneo' para procesar indicadores técnicos.")
-else:
-    st.error("CSV no encontrado.")
+# Ejecución
+reporte = scan_bullmarket_extended()
+print("\n" + "="*95)
+print(f" RESULTADOS: {len(reporte)} OPORTUNIDADES DETECTADAS ")
+print("="*95)
+print(reporte.to_string(index=False))
+print("="*95)
