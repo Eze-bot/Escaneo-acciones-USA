@@ -81,6 +81,10 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
         if sentimiento > 0: score += 20
         if gap > 3: score += 10
 
+        # Renombramos columnas para que la leyenda del gráfico sea clara
+        chart_df = last_30[['Close', 'RSI_Visual']].copy()
+        chart_df.columns = ['Precio ($)', 'RSI (Normalizado)']
+
         return {
             "Ticker": ticker,
             "Precio": round(precio_act, 2),
@@ -90,16 +94,16 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
             "News": "POS" if sentimiento > 0 else ("NEG" if sentimiento < 0 else "NEU"),
             "SL": round(precio_act - (2.5 * atr), 2),
             "TP": round(precio_act + (atr * 5), 2),
-            "ChartData": last_30[['Close', 'RSI_Visual']]
+            "ChartData": chart_df
         }
     except: return None
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Configuración")
-    p_min_input = st.number_input("Precio Mín ($)", 0.0, 5000.0, 1.0)
-    p_max_input = st.number_input("Precio Máx ($)", 0.0, 5000.0, 200.0)
-    gap_min_input = st.slider("GAP Mínimo (%)", 0.0, 20.0, 2.0)
+    p_min_in = st.number_input("Precio Mín ($)", 0.0, 5000.0, 1.0)
+    p_max_in = st.number_input("Precio Máx ($)", 0.0, 5000.0, 200.0)
+    gap_min_in = st.slider("GAP Mínimo (%)", 0.0, 20.0, 2.0)
     st.divider()
     id_ins = st.text_input("ID Green API", "7103533853")
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
@@ -107,7 +111,7 @@ with st.sidebar:
 
 # --- PANEL PRINCIPAL ---
 st.title("🚀 Escáner de Momentum & Tendencia")
-st.info("💡 **News NEU:** Noticias neutrales o sin impacto reciente. **Línea Azul:** Precio. **Línea Naranja:** RSI Escalado.")
+st.info("📊 **Línea Azul:** Precio de Cierre | 🔴 **Línea Roja:** Fuerza del RSI (Normalizada)")
 
 RUTA_CSV = "ACTIVOS_BULLMARKET_USA.csv"
 
@@ -116,7 +120,7 @@ if st.button("🔍 ANALIZAR MERCADO"):
         tickers = pd.read_csv(RUTA_CSV)['Ticker'].tolist()
         with st.spinner("Escaneando activos..."):
             with ThreadPoolExecutor(max_workers=10) as ex:
-                resultados = [r for r in list(ex.map(lambda x: analizar_activo(x, p_min_input, p_max_input, gap_min_input), tickers)) if r is not None]
+                resultados = [r for r in list(ex.map(lambda x: analizar_activo(x, p_min_in, p_max_in, gap_min_in), tickers)) if r is not None]
             
             st.session_state['resultados'] = sorted(resultados, key=lambda x: x['Confianza'], reverse=True)[:6]
 
@@ -136,7 +140,8 @@ if 'resultados' in st.session_state and st.session_state['resultados']:
                     <p style="color:red"><b>SL Sugerido: ${res['SL']}</b></p>
                 </div>
             """, unsafe_allow_html=True)
-            st.line_chart(res['ChartData'])
+            # Gráfico con colores fijos: Azul para precio, Rojo para RSI
+            st.line_chart(res['ChartData'], color=["#007bff", "#ff4b4b"])
 
     st.divider()
     
@@ -154,5 +159,3 @@ if 'resultados' in st.session_state and st.session_state['resultados']:
             st.success("✅ Alertas enviadas correctamente a WhatsApp.")
         except Exception as e:
             st.error(f"❌ Error al enviar: {e}")
-elif 'resultados' in st.session_state:
-    st.warning("No se encontraron activos con los filtros aplicados.")
