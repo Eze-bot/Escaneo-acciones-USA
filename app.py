@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AI Trading Pro", layout="wide", page_icon="📈")
 
-# --- ESTILOS CSS REFORZADOS ---
+# --- ESTILOS CSS REFORZADOS (ALTO CONTRASTE PARA MÓVIL) ---
 st.markdown("""
     <style>
     .ticker-card {
@@ -63,9 +63,10 @@ def get_ts2_sentiment(ticker):
         pos_keywords = ['surge', 'bullish', 'buy', 'growth', 'ai', 'record', 'profit', 'up']
         neg_keywords = ['fall', 'bearish', 'sell', 'risk', 'loss', 'drop', 'crash', 'down']
         count = 0
+        ticker_clean = str(ticker).split('.')[0].lower()
         for h in headlines:
             text = h.get_text().lower()
-            if ticker.lower() in text:
+            if ticker_clean in text:
                 count += 1
                 ts2_score += sum(1 for w in pos_keywords if w in text)
                 ts2_score -= sum(1 for w in neg_keywords if w in text)
@@ -91,7 +92,7 @@ def get_yahoo_sentiment(ticker_obj):
 # --- MOTOR DE ANÁLISIS ---
 def analizar_activo(ticker_raw, p_min, p_max, gap_min):
     try:
-        ticker = str(ticker_raw).split('.')[0].strip().upper()
+        ticker = str(ticker_raw).strip().upper()
         stock = yf.Ticker(ticker)
         df = stock.history(period="1y")
         if len(df) < 200: return None
@@ -100,7 +101,6 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
         cierre_ayer = df['Close'].iloc[-2]
         gap = ((precio_act - cierre_ayer) / cierre_ayer) * 100
         
-        # LÍNEA CORREGIDA AQUÍ:
         if not (p_min <= precio_act <= p_max) or gap < gap_min:
             return None
 
@@ -128,7 +128,10 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
         if gap > 3: score += 10
 
         chart_df = last_30[['Close', 'RSI_Visual']].copy()
-        chart_df.columns = ['Precio ($)', 'RSI (Norm)']
+        chart_df.columns = ['Precio', 'RSI (Norm)']
+
+        # Identificar tipo para el mensaje de WhatsApp
+        tipo = "CEDEAR" if ticker.endswith(".BA") else "USA"
 
         return {
             "Ticker": ticker,
@@ -139,34 +142,58 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
             "News": "🚀 POS" if sentimiento_total > 0 else ("🔴 NEG" if sentimiento_total < 0 else "⚪ NEU"),
             "SL": round(precio_act - (2.5 * atr), 2),
             "TP": round(precio_act + (atr * 5), 2),
-            "ChartData": chart_df
+            "ChartData": chart_df,
+            "Tipo": tipo
         }
     except: return None
 
 # --- SIDEBAR ---
 with st.sidebar:
+    st.header("🌍 Selección de Mercado")
+    opcion_mercado = st.selectbox("Analizar actualmente:", ["Acciones USA (Directas)", "CEDEARs (Argentina)"])
+    
     st.header("⚙️ Configuración")
-    p_min_in = st.number_input("Precio Mín ($)", 0.0, 5000.0, 1.0)
-    p_max_in = st.number_input("Precio Máx ($)", 0.0, 5000.0, 200.0)
+    # Ajustamos límites de precio para CEDEARs en pesos
+    p_min_in = st.number_input("Precio Mín", 0.0, 2000000.0, 1.0)
+    p_max_in = st.number_input("Precio Máx", 0.0, 2000000.0, 1000000.0)
     gap_min_in = st.slider("GAP Mínimo (%)", 0.0, 20.0, 1.5)
+    
     st.divider()
     id_ins = st.text_input("ID Green API", "7103533853")
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
     celular = st.text_input("WhatsApp destino", "5492664300161")
 
 # --- PANEL PRINCIPAL ---
-st.title("🚀 Escáner Momentum Pro")
-st.info("📊 **Línea Azul:** Precio | 🔴 **Línea Roja:** RSI (Normalizado)")
+st.title(f"🚀 Escáner: {opcion_mercado}")
 
 RUTA_CSV = "ACTIVOS_BULLMARKET_USA.csv"
 
-if st.button("🔍 ANALIZAR MERCADO"):
+if st.button("🔍 INICIAR ANÁLISIS"):
     if os.path.exists(RUTA_CSV):
-        tickers = pd.read_csv(RUTA_CSV)['Ticker'].tolist()
-        with st.spinner("Escaneando activos y noticias..."):
-            with ThreadPoolExecutor(max_workers=10) as ex:
-                resultados = [r for r in list(ex.map(lambda x: analizar_activo(x, p_min_in, p_max_in, gap_min_in), tickers)) if r is not None]
-            st.session_state['resultados'] = sorted(resultados, key=lambda x: x['Confianza'], reverse=True)[:6]
+        df_csv = pd.read_csv(RUTA_CSV)
+        todos_los_tickers = df_csv['Ticker'].tolist()
+        
+        # Filtro por sufijo .BA
+        if opcion_mercado == "CEDEARs (Argentina)":
+            tickers_filtrados = [t for t in todos_los_tickers if str(t).upper().endswith('.BA')]
+        else:
+            tickers_filtrados = [t for t in todos_los_tickers if not str(t).upper().endswith('.BA')]
+
+        if not tickers_filtrados:
+            st.warning(f"No hay tickers que coincidan con {opcion_mercado} en el CSV.")
+        else:
+            with st.spinner(f"Escaneando {len(tickers_filtrados)} activos..."):
+                with ThreadPoolExecutor(max_workers=10) as ex:
+                    resultados = [r for r in list(ex.map(lambda x: analizar_activo(x, p_min_in, p_max_in, gap_min_in), tickers_filtrados)) if r is not None]
+                
+                if resultados:
+                    st.session_state['resultados'] = sorted(resultados, key=lambda x: x['Confianza'], reverse=True)[:6]
+                    st.session_state['mercado_actual'] = opcion_mercado
+                else:
+                    st.session_state['resultados'] = []
+                    st.info("Ningún activo superó los filtros de GAP y Precio en este mercado.")
+    else:
+        st.error(f"Archivo {RUTA_CSV} no encontrado.")
 
 # --- MOSTRAR RESULTADOS ---
 if 'resultados' in st.session_state and st.session_state['resultados']:
@@ -189,14 +216,17 @@ if 'resultados' in st.session_state and st.session_state['resultados']:
     st.divider()
     if st.button("📲 ENVIAR ALERTAS A WHATSAPP"):
         ahora = datetime.datetime.now(pytz.timezone('America/Argentina/Buenos_Aires'))
-        msg = f"🎯 *OPORTUNIDADES DETECTADAS*\n_{ahora.strftime('%d/%m %H:%M')}_\n━━━━━━━━━━━━━━━━━━\n"
+        mercado_tag = st.session_state.get('mercado_actual', 'MERCADO')
+        msg = f"🎯 *OPORTUNIDADES {mercado_tag.upper()}*\n_{ahora.strftime('%d/%m %H:%M')}_\n━━━━━━━━━━━━━━━━━━\n"
         for r in res_finales:
-            msg += f"🚀 *{r['Ticker']}* | ${r['Precio']} | +{r['Gap %']}%\n"
+            # Agregamos el tipo (CEDEAR/USA) al mensaje
+            msg += f"🚀 *{r['Ticker']}* ({r['Tipo']}) | ${r['Precio']} | +{r['Gap %']}%\n"
             msg += f"   - Confianza: {r['Confianza']}/100 | News: {r['News']}\n"
             msg += f"   - SL: ${r['SL']} | TP: ${r['TP']}\n\n"
+        
         try:
             greenAPI = API.GreenApi(id_ins, token_ins)
             greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
-            st.success("✅ Alertas enviadas a WhatsApp.")
+            st.success("✅ Mensaje enviado con distinción de mercado.")
         except Exception as e:
-            st.error(f"❌ Error al enviar: {e}")
+            st.error(f"Error WhatsApp: {e}")
