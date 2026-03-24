@@ -12,126 +12,162 @@ from bs4 import BeautifulSoup
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AI Trading Quad-Scan", layout="wide", page_icon="🇺🇸")
 
-# --- ESTILOS CSS ---
+# --- ESTILOS CSS REFORZADOS (Modo Oscuro Amigable) ---
 st.markdown("""
    <style>
    .ticker-card {
-       background-color: #ffffff;
+       background-color: #1e1e1e;
        border-radius: 12px;
-       padding: 15px;
-       border-left: 6px solid #1A73E8;
-       margin-bottom: 15px;
-       box-shadow: 0px 2px 8px rgba(0,0,0,0.08);
+       padding: 18px;
+       border: 1px solid #333;
+       margin-bottom: 20px;
+       box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
+       color: white !important;
     }
-   .type-label { font-size: 0.8em; color: #5f6368; font-weight: normal; }
-   .pos-label { color: #1E8E3E; font-weight: bold; }
-   .neg-label { color: #D93025; font-weight: bold; }
-   .exit-label { color: #f29900; font-weight: bold; }
+   .type-label { font-size: 0.85em; color: #aaaaaa; }
+   .price-text { font-size: 1.5em; font-weight: bold; color: #1A73E8; margin: 0; }
+   .data-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 0.95em; }
+   .sl-label { color: #ff4b4b; font-weight: bold; }
+   .exit-label { color: #00c853; font-weight: bold; }
+   .profit-tag { background-color: #00c85322; color: #00c853; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
    </style>
    """, unsafe_allow_html=True)
 
 # --- MOTOR DE ANÁLISIS ---
 def analizar_activo(ticker_raw, p_min, p_max, gap_min):
     try:
+        # 1. Limpieza de Ticker
         ticker = str(ticker_raw).split('.')[0].strip().upper()
         stock = yf.Ticker(ticker)
         
-        # Detectar Tipo de Activo (ETF o ACCIÓN)
+        # 2. Detección de Tipo
         info = stock.info
-        tipo_raw = info.get('quoteType', 'EQUITY')
-        tipo = "ETF" if tipo_raw == "ETF" else "ACCIÓN"
+        tipo = "ETF" if info.get('quoteType') == "ETF" else "ACCIÓN"
 
+        # 3. Obtener Datos
         df = stock.history(period="1y") 
         if df.empty or len(df) < 50: return None
 
+        # 4. Cálculos de Precio y GAP
         precio_act = df['Close'].iloc[-1]
         cierre_ayer = df['Close'].iloc[-2]
         gap = ((precio_act - cierre_ayer) / cierre_ayer) * 100
         
+        # 5. Filtros de Usuario
         if not (p_min <= precio_act <= p_max) or gap < gap_min: return None
 
-        # Indicadores Técnicos
+        # 6. Indicadores Técnicos
+        atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
+        
+        # RSI Manual
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rsi_serie = 100 - (100 / (1 + (gain / loss)))
-        atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
         
-        # Gráfico (Últimos 30 días)
+        # 7. Lógica 2:1 + 0.5% Comisión
+        riesgo = atr * 1.5
+        sl = precio_act - riesgo
+        beneficio_objetivo = riesgo * 2
+        
+        # Precio de salida neto (cubriendo 1.01% para compra y venta con margen)
+        exit_price = (precio_act + beneficio_objetivo) * 1.01 
+        ganancia_neta = ((exit_price / (precio_act * 1.005)) - 1) * 100
+
+        # --- PREPARACIÓN DE GRÁFICO (SOLUCIÓN EJE X) ---
         last_30 = df.tail(30).copy()
-        p_min_v, p_max_v = last_30['Close'].min(), last_30['Close'].max()
-        rsi_norm = ((rsi_serie.tail(30) - 0) / 100) * (p_max_v - p_min_v) + p_min_v
+        rsi_30 = rsi_serie.tail(30)
         
+        # Normalizar RSI para que entre en el gráfico de precio
+        p_min_v, p_max_v = last_30['Close'].min(), last_30['Close'].max()
+        rsi_norm = ((rsi_30 - 0) / 100) * (p_max_v - p_min_v) + p_min_v
+        
+        # CORRECCIÓN EJE X: Forzamos el formato a "Día Mes" (Castellano)
+        # Esto elimina las horas y textos encimados.
         last_30.index = last_30.index.strftime('%d %b')
-        chart_df = pd.DataFrame({
+        
+        chart_data = pd.DataFrame({
             'Precio ($)': last_30['Close'],
             'RSI (Rojo)': rsi_norm
         })
-
-        # Puntaje de Confianza
-        score = 50
-        if rsi_serie.iloc[-1] > 50: score += 20
-        if gap > 1: score += 10
 
         return {
             "Ticker": ticker,
             "Tipo": tipo,
             "Precio": round(precio_act, 2),
             "Gap": round(gap, 2),
-            "Confianza": int(score),
+            "Confianza": 80 if rsi_serie.iloc[-1] > 50 else 60,
             "RSI": round(rsi_serie.iloc[-1], 1),
-            "SL": round(precio_act - (2 * atr), 2),
-            "TP": round(precio_act + (3 * atr), 2),
-            "Chart": chart_df
+            "SL": round(sl, 2),
+            "TP": round(exit_price, 2),
+            "GananciaPct": round(ganancia_neta, 2),
+            "Chart": chart_data
         }
     except: return None
 
-# --- SIDEBAR ---
+# --- SIDEBAR & UI ---
 with st.sidebar:
-    st.header("⚙️ Configuración USA")
+    st.header("⚙️ Configuración")
     p_min_in = st.number_input("Precio Mín ($)", 0.0, 5000.0, 5.0)
     p_max_in = st.number_input("Precio Máx ($)", 0.0, 5000.0, 1500.0)
     gap_min_in = st.slider("GAP Mínimo (%)", -5.0, 10.0, 0.5)
     st.divider()
     id_ins = st.text_input("ID Green API", "7103533853")
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
-    celular = st.text_input("WhatsApp", "5492664300161")
+    celular = st.text_input("WhatsApp destino", "5492664300161")
 
-# --- PANEL PRINCIPAL ---
-st.title("🇺🇸 Escáner USA: Acciones & ETFs")
-RUTA_CSV = "ACTIVOS_BULLMARKET_USA.csv"
+st.title("🚀 Escáner Pro USA: Ratio 2:1 Neta")
+st.info("🎯 **Fuentes:** Yahoo Finanzas + StockAnalysis | **Gráfico:** Precio (Azul) / RSI (Rojo)")
 
 if st.button("🔍 ANALIZAR MERCADO"):
+    RUTA_CSV = "ACTIVOS_BULLMARKET_USA.csv"
     if os.path.exists(RUTA_CSV):
         tickers = pd.read_csv(RUTA_CSV)['Ticker'].dropna().unique().tolist()
-        with st.spinner("Clasificando y analizando activos..."):
+        with st.spinner("Escaneando Wall Street con Ratio 2:1 Neta..."):
             with ThreadPoolExecutor(max_workers=10) as ex:
                 res = [r for r in list(ex.map(lambda x: analizar_activo(x, p_min_in, p_max_in, gap_min_in), tickers)) if r is not None]
-            st.session_state['resultados'] = sorted(res, key=lambda x: x['Confianza'], reverse=True)[:6]
+            
+            # Guardamos los top 6 resultados por precio descendente
+            st.session_state['resultados'] = sorted(res, key=lambda x: x['Precio'], reverse=True)[:6]
+            if not res: st.warning("No hay activos que cumplan los filtros actuales.")
     else:
         st.error("Archivo CSV no detectado.")
 
-# --- RESULTADOS ---
+# --- RENDERIZADO DE RESULTADOS ---
 if 'resultados' in st.session_state and st.session_state['resultados']:
-    cols = st.columns(2)
-    for i, r in enumerate(st.session_state['resultados']):
-        with cols[i % 2]:
+    res_finales = st.session_state['resultados']
+    
+    # Usamos contenedores fijos en lugar de columnas para móvil
+    for r in res_finales:
+        with st.container():
             st.markdown(f"""
                 <div class="ticker-card">
-                    <h3 style='margin:0;'>{r['Ticker']} <span class="type-label">({r['Tipo']})</span> — ${r['Precio']}</h3>
-                    <p style='margin:5px 0;'>🎯 Confianza: <b>{r['Confianza']}/100</b> | GAP: +{r['Gap']}%</p>
-                    <p style='margin:5px 0;'>🛑 SL: <span class="neg-label">${r['SL']}</span> | 🚀 <b>EXIT: <span class="exit-label">${r['TP']}</span></b></p>
+                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div>
+                            <p class="price-text">{r['Ticker']} <span class="type-label">({r['Tipo']})</span> — ${r['Precio']}</p>
+                            <p style='margin:4px 0; color: grey; font-size:0.85em;'>Ratio 2:1 incl. 0.5% comisión</p>
+                        </div>
+                        <span class="profit-tag">+{r['GananciaPct']}% Neto</span>
+                    </div>
+                    
+                    <div class="data-row">
+                        <span>🎯 Confianza: <b>{r['Confianza']}/100</b></span>
+                        <span>📈 GAP: +{r['Gap']}%</span>
+                    </div>
+                    
+                    <div class="data-row" style="border-top: 1px solid #333; padding-top: 8px;">
+                        <span class="sl-label">🛑 Stop Loss: ${r['SL']}</span>
+                        <span class="exit-label">🚀 EXIT PRICE: ${r['TP']}</span>
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
+            
+            # Gráfico con el eje X corregido y compactado (height=200)
+            # st.line_chart se encargará de mostrar las dos líneas (Precio y RSI)
             st.line_chart(r['Chart'], height=200, color=["#1A73E8", "#D93025"])
 
-    if st.button("📲 ENVIAR ALERTAS WHATSAPP"):
+    if st.button("📲 ENVIAR ALERTAS A WHATSAPP"):
         ahora = datetime.datetime.now(pytz.timezone('America/Argentina/Buenos_Aires'))
-        msg = f"🇺🇸 *OPORTUNIDADES USA*\n_{ahora.strftime('%d/%m %H:%M')}_\n━━━━━━━━━━━━━━━━━━\n"
-        for r in st.session_state['resultados']:
-            msg += f"🚀 *{r['Ticker']} ({r['Tipo']})* | ${r['Precio']}\n   - SL: ${r['SL']} | EXIT: ${r['TP']}\n\n"
-        try:
-            greenAPI = API.GreenApi(id_ins, token_ins)
-            greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
-            st.success("Enviado.")
-        except: st.error("Error API.")
+        msg = f"🇺🇸 *OPORTUNIDADES USA (2:1)*\n_{ahora.strftime('%d/%m %H:%M')}_\n━━━━━━━━━━━━━━━━━━\n"
+        for r in res_finales:
+            msg += f"🚀 *{r['Ticker']} ({r['Tipo']})* | ${
