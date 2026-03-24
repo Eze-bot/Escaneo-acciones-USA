@@ -1,6 +1,7 @@
 streamlit
 yfinance
 pandas
+plotly
 whatsapp_api_client_python
 requests
 beautifulsoup4
