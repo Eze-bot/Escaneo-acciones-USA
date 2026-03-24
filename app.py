@@ -28,7 +28,7 @@ st.markdown("""
    </style>
    """, unsafe_allow_html=True)
 
-def analizar_activo(ticker_raw, p_min, p_max, gap_min):
+def analizar_activo(ticker_raw, p_min_val, p_max_val, g_min_val):
     try:
         ticker = str(ticker_raw).split('.')[0].strip().upper()
         stock = yf.Ticker(ticker)
@@ -45,7 +45,7 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
         # --- GAP Y TÉCNICOS ---
         cierre_ayer = df['Close'].iloc[-2]
         gap = ((precio_act - cierre_ayer) / cierre_ayer) * 100
-        if not (p_min <= precio_act <= p_max) or gap < gap_min: 
+        if not (p_min_val <= precio_act <= p_max_val) or gap < g_min_val: 
             return None
 
         atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
@@ -82,18 +82,30 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
     except: 
         return None
 
-# --- UI ---
+# --- UI SIDEBAR ---
+with st.sidebar:
+    st.header("⚙️ Configuración")
+    p_min_in = st.number_input("Precio Mín", 0.0, 5000.0, 5.0)
+    p_max_in = st.number_input("Precio Máx", 0.0, 5000.0, 1500.0)
+    g_min_in = st.slider("GAP Mín %", -5.0, 10.0, 0.5)
+    st.divider()
+    id_ins = st.text_input("ID Green API", "7103533853")
+    token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
+    celular = st.text_input("WhatsApp", "5492664300161")
+
 st.title("🚀 Escáner USA: Estrategia 2:1")
 
-with st.sidebar:
-    st.header("Filtros")
-    p_min_val = st.number_input("Precio Mín", 0.0, 5000.0, 5.0)
-    p_max_val = st.number_input("Precio Máx", 0.0, 5000.0, 1500.0)
-    g_min_val = st.slider("GAP Mín %", -5.0, 10.0, 0.5)
-
+# --- BOTÓN DE ANÁLISIS ---
 if st.button("🔍 ANALIZAR MERCADO"):
     if os.path.exists("ACTIVOS_BULLMARKET_USA.csv"):
         tickers = pd.read_csv("ACTIVOS_BULLMARKET_USA.csv")['Ticker'].tolist()
-        with st.spinner("Calculando niveles y tendencias..."):
+        with st.spinner("Escaneando activos..."):
             with ThreadPoolExecutor(max_workers=10) as ex:
-                res = [r for r in list(ex.map(lambda x: analizar_activo(x, p_min_
+                # AQUÍ ESTABA EL ERROR: Ahora los paréntesis están correctamente cerrados.
+                res = [r for r in list(ex.map(lambda x: analizar_activo(x, p_min_in, p_max_in, g_min_in), tickers)) if r is not None]
+            st.session_state['res'] = sorted(res, key=lambda x: x['Neto'], reverse=True)[:6]
+    else: 
+        st.error("Archivo CSV no encontrado.")
+
+# --- MOSTRAR RESULTADOS ---
+if 'res' in st
