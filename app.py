@@ -29,7 +29,7 @@ st.markdown("""
    </style>
    """, unsafe_allow_html=True)
 
-# --- FUENTE 1: YAHOO FINANCES ---
+# --- FUNCIONES DE SENTIMIENTO (LAS 4 FUENTES) ---
 def get_yahoo_sentiment(ticker_obj):
     try:
         news = ticker_obj.news
@@ -42,7 +42,6 @@ def get_yahoo_sentiment(ticker_obj):
         return score
     except: return 0
 
-# --- FUENTE 2: TS2.TECH ---
 def get_ts2_sentiment(ticker):
     try:
         url = "https://ts2.tech/en/category/stock-market/"
@@ -60,7 +59,6 @@ def get_ts2_sentiment(ticker):
         return score
     except: return 0
 
-# --- FUENTE 3: STOCKANALYSIS ---
 def get_stockanalysis_sentiment(ticker):
     try:
         url = f"https://stockanalysis.com/stocks/{ticker.lower()}/"
@@ -70,12 +68,11 @@ def get_stockanalysis_sentiment(ticker):
         soup = BeautifulSoup(response.text, 'html.parser')
         text = soup.get_text().lower()
         score = 0
-        score += 2 if 'strong buy' in text or 'outperform' in text else 0
-        score -= 2 if 'sell' in text or 'underperform' in text else 0
+        if 'strong buy' in text or 'outperform' in text: score += 2
+        if 'sell' in text or 'underperform' in text: score -= 2
         return score
     except: return 0
 
-# --- FUENTE 4: MARKETWATCH ---
 def get_marketwatch_sentiment(ticker):
     try:
         url = f"https://www.marketwatch.com/investing/stock/{ticker.lower()}"
@@ -95,7 +92,7 @@ def get_marketwatch_sentiment(ticker):
 def analizar_activo(ticker_raw, p_min, p_max, gap_min):
     try:
         ticker = str(ticker_raw).strip().upper()
-        if "." in ticker: return None # Solo USA Directo
+        if "." in ticker: return None 
 
         stock = yf.Ticker(ticker)
         df = stock.history(period="1y")
@@ -107,7 +104,7 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
         
         if not (p_min <= precio_act <= p_max) or gap < gap_min: return None
 
-        # --- CUÁDRUPLE ANÁLISIS DE SENTIMIENTO ---
+        # Cuádruple Sentimiento
         s1 = get_yahoo_sentiment(stock)
         s2 = get_ts2_sentiment(ticker)
         s3 = get_stockanalysis_sentiment(ticker)
@@ -117,14 +114,12 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
         # Indicadores Técnicos
         ema20 = df['Close'].ewm(span=20).mean().iloc[-1]
         sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
-        
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rsi = 100 - (100 / (1 + (gain / loss))).iloc[-1]
         atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
 
-        # Puntaje de Confianza
         score = 0
         if precio_act > sma200: score += 30
         if precio_act > ema20: score += 20
@@ -132,10 +127,8 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
         if total_sent > 0: score += 20
         if gap > 2.5: score += 10
 
-        # Datos para gráfico
         last_30 = df.tail(30).copy()
         p_min_v, p_max_v = last_30['Close'].min(), last_30['Close'].max()
-        # Normalizar RSI para que entre en el gráfico de precio
         rsi_hist = 100 - (100 / (1 + (gain / loss))).tail(30)
         last_30['RSI_Norm'] = ((rsi_hist - 0) / 100) * (p_max_v - p_min_v) + p_min_v
         
@@ -143,14 +136,10 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
         chart_data.columns = ['Precio ($)', 'RSI (Norm)']
 
         return {
-            "Ticker": ticker,
-            "Precio": round(precio_act, 2),
-            "Gap %": round(gap, 2),
-            "Confianza": int(score),
-            "RSI": round(rsi, 1),
+            "Ticker": ticker, "Precio": round(precio_act, 2), "Gap %": round(gap, 2),
+            "Confianza": int(score), "RSI": round(rsi, 1),
             "News": "POS" if total_sent > 0 else ("NEG" if total_sent < 0 else "NEU"),
-            "SL": round(precio_act - (2.2 * atr), 2),
-            "TP": round(precio_act + (4.0 * atr), 2),
+            "SL": round(precio_act - (2.2 * atr), 2), "TP": round(precio_act + (4.0 * atr), 2),
             "Chart": chart_data
         }
     except: return None
@@ -160,36 +149,22 @@ with st.sidebar:
     st.header("🇺🇸 Configuración USA")
     p_min_in = st.number_input("Precio Mín ($)", 0.0, 5000.0, 5.0)
     p_max_in = st.number_input("Precio Máx ($)", 0.0, 5000.0, 1000.0)
-    gap_min_in = st.slider("GAP Mínimo (%)", -2.0, 15.0, 1.0)
+    gap_min_in = st.slider("GAP Mínimo (%)", -2.0, 15.0, 0.0)
     st.divider()
     id_ins = st.text_input("ID Green API", "7103533853")
     token_ins = st.text_input("Token API", "e5f6764f996d4c9ea88594a98ebd1741f6ab9f8502a24687b5", type="password")
     celular = st.text_input("WhatsApp", "5492664300161")
 
 # --- PANEL PRINCIPAL ---
-st.title("🚀 Escáner Cuádruple: USA Direct")
-st.info("Fuentes: Yahoo | TS2 | StockAnalysis | MarketWatch")
-
+st.title("🚀 Escáner Cuádruple USA")
 RUTA_CSV = "ACTIVOS_BULLMARKET_USA.csv"
 
 if st.button("🔍 INICIAR MEGA-ANÁLISIS"):
     if os.path.exists(RUTA_CSV):
         tickers = pd.read_csv(RUTA_CSV)['Ticker'].tolist()
-        with st.spinner("Analizando con 4 fuentes de noticias y datos técnicos..."):
+        with st.spinner("Analizando con 4 fuentes..."):
             with ThreadPoolExecutor(max_workers=10) as ex:
                 res = [r for r in list(ex.map(lambda x: analizar_activo(x, p_min_in, p_max_in, gap_min_in), tickers)) if r is not None]
             st.session_state['resultados'] = sorted(res, key=lambda x: x['Confianza'], reverse=True)[:6]
     else:
-        st.error("Falta el archivo CSV.")
-
-# --- RESULTADOS ---
-if 'resultados' in st.session_state and st.session_state['resultados']:
-    cols = st.columns(2)
-    for i, r in enumerate(st.session_state['resultados']):
-        with cols[i % 2]:
-            lbl = "pos-label" if r['News'] == "POS" else ("neg-label" if r['News'] == "NEG" else "neu-label")
-            st.markdown(f"""
-                <div class="ticker-card">
-                    <h3>{r['Ticker']} — ${r['Precio']}</h3>
-                    <p>🎯 Confianza: <b>{r['Confianza']}/100</b> | GAP: +{r['Gap %']}%</p>
-                    <p>🎭 Sentimiento: <span class="{lbl}">{r['News']}</span> |
+        st.error("Falta el archivo CSV
