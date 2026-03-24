@@ -101,11 +101,53 @@ if st.button("🔍 ANALIZAR MERCADO"):
         tickers = pd.read_csv("ACTIVOS_BULLMARKET_USA.csv")['Ticker'].tolist()
         with st.spinner("Escaneando activos..."):
             with ThreadPoolExecutor(max_workers=10) as ex:
-                # AQUÍ ESTABA EL ERROR: Ahora los paréntesis están correctamente cerrados.
                 res = [r for r in list(ex.map(lambda x: analizar_activo(x, p_min_in, p_max_in, g_min_in), tickers)) if r is not None]
             st.session_state['res'] = sorted(res, key=lambda x: x['Neto'], reverse=True)[:6]
     else: 
         st.error("Archivo CSV no encontrado.")
 
 # --- MOSTRAR RESULTADOS ---
-if 'res' in st
+if 'res' in st.session_state:
+    finales = st.session_state['res']
+    for r in finales:
+        st.markdown(f"""
+            <div class="ticker-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span class="price-text">{r['Ticker']} — ${r['Precio']}</span>
+                    <span style="color:{r['T_Color']};" class="trend-label">{r['Tendencia']}</span>
+                </div>
+                <div style="margin-top:8px;">
+                    <span class="type-label">({r['Tipo']})</span> | 📈 GAP: {r['Gap']}% | <span class="profit-tag">+{r['Neto']}% Neto</span>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Gráfico Plotly con líneas de niveles
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=r['df_plot'].index, y=r['df_plot']['Close'], name="Precio", line=dict(color='#1A73E8', width=3)))
+        fig.add_trace(go.Scatter(x=r['df_plot'].index, y=r['rsi_plot'], name="RSI", line=dict(color='#ff4b4b', width=1.5, dash='dot'), yaxis="y2"))
+        
+        fig.add_hline(y=r['TP'], line_dash="dash", line_color="#00c853", annotation_text=f"EXIT: ${r['TP']}")
+        fig.add_hline(y=r['SL'], line_dash="dash", line_color="#ff4b4b", annotation_text=f"SL: ${r['SL']}")
+
+        fig.update_layout(
+            height=280, 
+            margin=dict(l=0, r=0, t=20, b=0), 
+            paper_bgcolor='rgba(0,0,0,0)', 
+            plot_bgcolor='rgba(0,0,0,0)', 
+            showlegend=False,
+            yaxis2=dict(overlaying='y', side='right', range=[0, 100], showgrid=False)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # --- BOTÓN WHATSAPP ---
+    if st.button("📲 ENVIAR ALERTAS WHATSAPP"):
+        msg = f"🇺🇸 *OPORTUNIDADES USA*\n━━━━━━━━━━━━━━━━━━\n"
+        for r in finales:
+            msg += f"🚀 *{r['Ticker']}* | ${r['Precio']}\n   • Tendencia: {r['Tendencia']}\n   • EXIT: ${r['TP']} (+{r['Neto']}%)\n   • SL: ${r['SL']}\n\n"
+        try:
+            greenAPI = API.GreenApi(id_ins, token_ins)
+            greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
+            st.success("Alertas enviadas.")
+        except: 
+            st.error("Error en el envío.")
