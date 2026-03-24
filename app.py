@@ -29,7 +29,7 @@ st.markdown("""
    </style>
    """, unsafe_allow_html=True)
 
-# --- FUNCIONES DE SENTIMIENTO (LAS 4 FUENTES) ---
+# --- FUNCIONES DE SCRAPING (SENTIMIENTO) ---
 def get_yahoo_sentiment(ticker_obj):
     try:
         news = ticker_obj.news
@@ -105,13 +105,15 @@ def analizar_activo(ticker_raw, p_min, p_max, gap_min):
         if not (p_min <= precio_act <= p_max) or gap < gap_min: return None
 
         # Cuádruple Sentimiento
-        s1 = get_yahoo_sentiment(stock)
-        s2 = get_ts2_sentiment(ticker)
-        s3 = get_stockanalysis_sentiment(ticker)
-        s4 = get_marketwatch_sentiment(ticker)
-        total_sent = s1 + s2 + s3 + s4
+        s_scores = [
+            get_yahoo_sentiment(stock),
+            get_ts2_sentiment(ticker),
+            get_stockanalysis_sentiment(ticker),
+            get_marketwatch_sentiment(ticker)
+        ]
+        total_sent = sum(s_scores)
 
-        # Indicadores Técnicos
+        # Técnica
         ema20 = df['Close'].ewm(span=20).mean().iloc[-1]
         sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
         delta = df['Close'].diff()
@@ -167,4 +169,32 @@ if st.button("🔍 INICIAR MEGA-ANÁLISIS"):
                 res = [r for r in list(ex.map(lambda x: analizar_activo(x, p_min_in, p_max_in, gap_min_in), tickers)) if r is not None]
             st.session_state['resultados'] = sorted(res, key=lambda x: x['Confianza'], reverse=True)[:6]
     else:
-        st.error("Falta el archivo CSV
+        st.error("Falta el archivo CSV.")
+
+# --- RESULTADOS ---
+if 'resultados' in st.session_state and st.session_state['resultados']:
+    res_finales = st.session_state['resultados']
+    cols = st.columns(2)
+    for i, r in enumerate(res_finales):
+        with cols[i % 2]:
+            lbl = "pos-label" if r['News'] == "POS" else ("neg-label" if r['News'] == "NEG" else "neu-label")
+            st.markdown(f"""
+                <div class="ticker-card">
+                    <h3>{r['Ticker']} — ${r['Precio']}</h3>
+                    <p>🎯 Confianza: <b>{r['Confianza']}/100</b> | GAP: +{r['Gap %']}%</p>
+                    <p>🎭 Sentimiento: <span class="{lbl}">{r['News']}</span> | RSI: {r['RSI']}</p>
+                    <p style="color:#D93025"><b>SL Sugerido: ${r['SL']}</b></p>
+                </div>
+                """, unsafe_allow_html=True)
+            st.line_chart(r['Chart'], color=["#1A73E8", "#D93025"])
+
+    if st.button("📲 ENVIAR ALERTAS WHATSAPP"):
+        ahora = datetime.datetime.now(pytz.timezone('America/Argentina/Buenos_Aires'))
+        msg = f"🇺🇸 *OPORTUNIDADES USA (QUAD-SCAN)*\n_{ahora.strftime('%d/%m %H:%M')}_\n━━━━━━━━━━━━━━━━━━\n"
+        for r in res_finales:
+            msg += f"🚀 *{r['Ticker']}* | ${r['Precio']} | +{r['Gap %']}%\n   - Confianza: {r['Confianza']}/100 | News: {r['News']}\n   - SL: ${r['SL']} | TP: ${r['TP']}\n\n"
+        try:
+            greenAPI = API.GreenApi(id_ins, token_ins)
+            greenAPI.sending.sendMessage(f"{celular}@c.us", msg)
+            st.success("Alertas enviadas.")
+        except: st.error("Error al enviar.")
